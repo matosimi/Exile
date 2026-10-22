@@ -1,0 +1,1 @@
+mads Exile.asm -o:Exile.xex -l -t

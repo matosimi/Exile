@@ -1,0 +1,1 @@
+python sprites_convert.py exile_sprite_data_raw_bitmap.xex exile_sprite_data_raw_columns.dat --lines 80 --layout cell
