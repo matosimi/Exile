@@ -2,14 +2,12 @@
 ; these values aren't tweakable yet...
 load_address=$1200
 base_address=$100
-	
+SRAM = 0	
 screen_width=64                 ; BBC bytes per pixel row (4bpp): 128 px wide
 ; Atari target: the same 128 px play area is 32 chars at 2bpp (4 px per char).
 ; Verified in emulation: the game only writes cell columns 0-63 of $6000-$7fff,
 ; so there is no status strip in the 80-column (160 px) BBC layout to keep.
 atari_chars_wide=32
-SRAM=0
-
 hposp0	equ $d000
 hposm0	equ $d004
 sizep0	equ $d008
@@ -4042,6 +4040,8 @@ L1711
 ;
 ; Stores orientation flags (%xx000000) in square_orientation.
 determine_background
+    LDA #0                      ; DEBUG: path flag = plain
+    STA DBG_OBJFLAG
     LDX #$00
     STX new_object_data_pointer
     STX square_is_mapped_data
@@ -4094,9 +4094,17 @@ L173D
     STA new_object_type_pointer
     
     LDA background_objects_handler_lookup,X
+    PHA                         ; DEBUG: path flag = hash hit
+    LDA #1
+    STA DBG_OBJFLAG
+    PLA
     JMP L1761 ; use_background_object_from_hash
     
 no_background_object_in_hash
+    PHA                         ; DEBUG: path flag = object number without hash entry
+    LDA #2
+    STA DBG_OBJFLAG
+    PLA
     LDX zp_various_9d ; background_object_number
     LDA lookup_for_unmatched_hash,X
     EOR square_orientation
@@ -4513,6 +4521,7 @@ collided_in_last_cycle
     dta $00
 player_teleporting_flag
     dta $00
+BG_RENDERER_MODE=1             ; 0 = BBC reference, 1 = game map, 2 = tile test map, 3 = reference test map
 main_loop
     LSR whistle1_played         ; reset whistle1
     INC loop_counter            ; increment loop counter
@@ -4543,7 +4552,18 @@ L19DC
     BEQ L19E7
     INC explosion_timer
 L19E7
-    JSR vram_convert            ; TEST HOOK: show the game's VRAM in the charsets (sprite not drawn)
+    JSR clear_charsets          ; TEST: start each frame from an empty screen
+    IFT BG_RENDERER_MODE=2
+        JSR bg_tiles_test       ; native synthetic map
+    ELI BG_RENDERER_MODE=3
+        JSR clear_test_bbc_vram
+        JSR bg_test_reference   ; synthetic map through original BBC plotter
+        JSR vram_convert        ; BBC VRAM reference renderer
+    ELI BG_RENDERER_MODE=1
+        JSR bg_tiles_test       ; native game map
+    ELS
+        JSR vram_convert        ; BBC VRAM game reference
+    EIF
     JMP main_loop               ; go round the loop again
 handle_background_object
     TSX
@@ -13537,7 +13557,7 @@ L724D
     STA $D301                   ; (game_init does the same later)
     LDA #$03                    ; SKCTL: POKEY running. The OS normally sets this; the RANDOM
     STA skctl                   ; register ($d20a) that the game uses stops without it
-    JSR bg_save                 ; background copy, before the sprite goes in
+    ; bg_save targets $A800-$BFFF, overlapping the test sheet at $B000.
     JSR sprite_init             ; first draw; before game_init turns NMI on
     game_init
     LDA #$C0
@@ -14012,6 +14032,7 @@ m4_dli
     PHA
     LDX m4_dli_index
     LDA m4_charset_pages,X
+    ;lda pooper,x 
     sta $d40a ;wsync
     STA CHBASE
     inc m4_dli_index
@@ -14022,7 +14043,10 @@ m4_dli
 
 m4_charset_pages                ; high byte of each band's charset (1 KB each)
 :6    dta h(vramfont+#*$400)
-    
+
+pooper
+:6    dta h($6000+#*$400)
+   
 vramfont	equ $e000
     
 m4_band_hue
@@ -14069,8 +14093,7 @@ m4_screen
 ;;   main  = sprite column col-CUR_COL,   line L, shifted right by 2*XSUB bits
 ;;   spill = sprite column col-CUR_COL-1, line L, shifted left by 8-2*XSUB bits
 ;; Pixel %00 is transparent: mask = pixels that are not %00.
-;; Moving: sprite_move erases the old area from the background copy, then
-;; draws at the new position. The background copy is taken by bg_save.
+;; The background copy is taken by bg_save (startup only; sprite moving was removed).
 ;; Memory: code $9f00-$a1ff, sh_r tables $a200 (4 x 256), sh_l tables $a600 (4 x 256),
 ;;         background copy $aa00-$c1ff (= charsets $8400-$9bff). OS/BASIC ROM off.
 ;; Glyph of screen cell (col,row): charset_page[row>>2] + (row&3), offset col*8 + (Y&7).
@@ -14130,65 +14153,6 @@ bgs_byte
     BNE bgs_page
     RTS
 
-; sprite_move: erase at CUR, then draw at NEW (sprite_new_*)
-sprite_move
-    JSR sprite_erase
-    LDA sprite_new_col
-    STA CUR_COL
-    LDA sprite_new_xsub
-    STA CUR_XSUB
-    LDA sprite_new_y
-    STA CUR_Y
-    JSR sprite_draw
-    RTS
-sprite_new_col
-    dta 8
-sprite_new_xsub
-    dta 2
-sprite_new_y
-    dta 32
-
-; test step: the sprite follows the joystick (left/right = x, up/down = y)
-sprite_step
-    LDA keys_pressed+33         ; left (Q)
-    BPL ss_not_left
-    LDA sprite_px
-    BEQ ss_not_left
-    DEC sprite_px
-ss_not_left
-    LDA keys_pressed+34         ; right (W)
-    BPL ss_not_right
-    LDA sprite_px
-    CMP #120
-    BCS ss_not_right
-    INC sprite_px
-ss_not_right
-    LDA keys_pressed+35         ; up (P)
-    BPL ss_not_up
-    LDA sprite_py
-    BEQ ss_not_up
-    DEC sprite_py
-ss_not_up
-    LDA keys_pressed+37         ; down (L)
-    BPL ss_not_down
-    LDA sprite_py
-    CMP #112
-    BCS ss_not_down
-    INC sprite_py
-ss_not_down
-    LDA sprite_px
-    LSR
-    LSR
-    STA sprite_new_col
-    LDA sprite_px
-    AND #3
-    STA sprite_new_xsub
-    LDA sprite_py
-    STA sprite_new_y
-    JSR sprite_move
-    RTS
-sprite_py
-    dta 32
 sprite_px
     dta 34
 
@@ -14234,47 +14198,6 @@ line_y
     RTS
 ly_off
     SEC
-    RTS
-
-; erase: copy the background back over the area of the current position
-sprite_erase
-    LDA #0
-    STA SPR_COL
-er_col
-    LDA SPR_COL
-    SEC
-    SBC CUR_COL
-    STA SPR_CX
-    CMP #33
-    BCS er_next_col
-    LDA #0
-    STA SPR_L
-er_line
-    JSR line_y
-    BCS er_next_line
-    JSR glyph_addr
-    LDA SPR_DST                 ; background = glyph + (bg_copy - vramfont)
-    STA SPR_BGP
-    LDA SPR_DST+1
-    CLC
-    ADC #>(bg_copy-vramfont)
-    STA SPR_BGP+1
-    LDY #0
-    LDA (SPR_BGP),Y
-    STA (SPR_DST),Y
-er_next_line
-    INC SPR_L
-    LDA SPR_L
-    CMP #80
-    BEQ er_next_col
-    JMP er_line
-er_next_col
-    INC SPR_COL
-    LDA SPR_COL
-    CMP #32
-    BEQ er_done
-    JMP er_col
-er_done
     RTS
 
 ; draw: blit the sprite at CUR over the current screen content
@@ -14380,9 +14303,9 @@ nz_of
     RTS
 
 sprite_colbase_lo
-    :32 dta <(sprite_test_data+[#*80])
+    :32 dta <(sprite_test_data+[#*81])
 sprite_colbase_hi
-    :32 dta >(sprite_test_data+[#*80])
+    :32 dta >(sprite_test_data+[#*81])
 
 ; sh_r_tab + x*256: v >> 2x pixels (XSUB = x)
 ; sh_l_tab + x*256: (v << (8-2x)) & $ff
@@ -14397,6 +14320,878 @@ sh_l_tab
     :256 dta [[#<<6]&$FF]
     :256 dta [[#<<4]&$FF]
     :256 dta [[#<<2]&$FF]
+;; ---------------------------------------------------------------------------
+;; Grid test (native, first step of the native renderer). Measured on the BBC:
+;; a background square is 16 px across (4 Atari cells) and 32 lines down
+;; (4 cell rows). The window starts at screen_start_square + low/256 squares,
+;; so the square's top-left cell is i*4 - (x_low>>6) across and j*4 - (y_low>>6)
+;; down. Each square with background (plot_background_square: not $19) is
+;; painted solid (pixel %01), clipped to the 32 x 16 cell window.
+gtvar_i=$BF00
+gtvar_j=$BF01
+gtvar_m=$BF02
+gtvar_k=$BF03
+gtvar_c=$BF04
+gtvar_r=$BF05
+gtvar_xl=$BF06                  ; window origin sub-square offset in cells (x_low>>6)
+gtvar_yl=$BF07                  ; (y_low>>6)
+
+bg_grid_test
+    LDA screen_start_square_x_low
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    STA gtvar_xl
+    LDA screen_start_square_y_low
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    STA gtvar_yl
+    LDA #0
+    STA gtvar_j
+gt_j
+    LDA #0
+    STA gtvar_i
+gt_i
+    LDA screen_start_square_x
+    CLC
+    ADC gtvar_i
+    STA square_x
+    LDA screen_start_square_y
+    CLC
+    ADC gtvar_j
+    STA square_y
+    JSR determine_background
+    CMP #$19                    ; empty square (plot_background_square: CPY #$19)
+    BEQ gt_next
+    LDA #0
+    STA gtvar_m
+gt_m
+    LDA #0
+    STA gtvar_k
+gt_k
+    LDA gtvar_i                 ; cell column = i*4 + k - (x_low>>6)
+    ASL
+    ASL
+    CLC
+    ADC gtvar_k
+    SEC
+    SBC gtvar_xl
+    STA gtvar_c
+    CMP #32                     ; outside the window?
+    BCS gt_skip
+    LDA gtvar_j                 ; cell row = j*4 + m - (y_low>>6)
+    ASL
+    ASL
+    CLC
+    ADC gtvar_m
+    SEC
+    SBC gtvar_yl
+    STA gtvar_r
+    CMP #16
+    BCS gt_skip
+    LDA gtvar_r                 ; line = row*8
+    ASL
+    ASL
+    ASL
+    STA SPR_Y
+    LDA gtvar_c
+    STA SPR_COL
+    JSR glyph_addr
+    LDY #0
+gt_fill
+    LDA #$55
+    STA (SPR_DST),Y
+    INY
+    CPY #8
+    BNE gt_fill
+gt_skip
+    INC gtvar_k
+    LDA gtvar_k
+    CMP #4
+    BNE gt_k
+    INC gtvar_m
+    LDA gtvar_m
+    CMP #4
+    BNE gt_m
+gt_next
+    INC gtvar_i
+    LDA gtvar_i
+    CMP #9
+    BEQ gt_row_done
+    JMP gt_i
+gt_row_done
+    INC gtvar_j
+    LDA gtvar_j
+    CMP #5
+    BEQ gt_done
+    JMP gt_j
+gt_done
+    RTS
+
+;; ---------------------------------------------------------------------------
+;; Tile test (native, next step): each background square is drawn with its own
+;; sprite from the sheet (sprite_test_data, column layout, 81 bytes per column).
+;; Rules read from plot_sprite and setup_background_sprite_values:
+;;   sprite  = background_sprite_lookup[v] & $7f
+;;   column  = (rowbyteoffset of a) & $1f, a = sprite_offset_a_lookup[sprite]
+;;   first line = sprite_offset_b_lookup[sprite] >> 3
+;;   columns = ceil((width_pixels + phase_pixels) / 4), height = sprite_height_lookup >> 3 lines
+;; Orientation flips source columns/lines; H-flip also reverses pixel order.
+;; H-flip branch polarity remains the experimental, screen-matched setting.
+;; Background Y offset and phase shifting for flipped sprites are not handled.
+pix_rev                        ; 2-bit pixel order reversed within a byte (horizontal flip)
+	dta $00,$40,$80,$C0,$10,$50,$90,$D0,$20,$60,$A0,$E0,$30,$70,$B0,$F0
+	dta $04,$44,$84,$C4,$14,$54,$94,$D4,$24,$64,$A4,$E4,$34,$74,$B4,$F4
+	dta $08,$48,$88,$C8,$18,$58,$98,$D8,$28,$68,$A8,$E8,$38,$78,$B8,$F8
+	dta $0C,$4C,$8C,$CC,$1C,$5C,$9C,$DC,$2C,$6C,$AC,$EC,$3C,$7C,$BC,$FC
+	dta $01,$41,$81,$C1,$11,$51,$91,$D1,$21,$61,$A1,$E1,$31,$71,$B1,$F1
+	dta $05,$45,$85,$C5,$15,$55,$95,$D5,$25,$65,$A5,$E5,$35,$75,$B5,$F5
+	dta $09,$49,$89,$C9,$19,$59,$99,$D9,$29,$69,$A9,$E9,$39,$79,$B9,$F9
+	dta $0D,$4D,$8D,$CD,$1D,$5D,$9D,$DD,$2D,$6D,$AD,$ED,$3D,$7D,$BD,$FD
+	dta $02,$42,$82,$C2,$12,$52,$92,$D2,$22,$62,$A2,$E2,$32,$72,$B2,$F2
+	dta $06,$46,$86,$C6,$16,$56,$96,$D6,$26,$66,$A6,$E6,$36,$76,$B6,$F6
+	dta $0A,$4A,$8A,$CA,$1A,$5A,$9A,$DA,$2A,$6A,$AA,$EA,$3A,$7A,$BA,$FA
+	dta $0E,$4E,$8E,$CE,$1E,$5E,$9E,$DE,$2E,$6E,$AE,$EE,$3E,$7E,$BE,$FE
+	dta $03,$43,$83,$C3,$13,$53,$93,$D3,$23,$63,$A3,$E3,$33,$73,$B3,$F3
+	dta $07,$47,$87,$C7,$17,$57,$97,$D7,$27,$67,$A7,$E7,$37,$77,$B7,$F7
+	dta $0B,$4B,$8B,$CB,$1B,$5B,$9B,$DB,$2B,$6B,$AB,$EB,$3B,$7B,$BB,$FB
+	dta $0F,$4F,$8F,$CF,$1F,$5F,$9F,$DF,$2F,$6F,$AF,$EF,$3F,$7F,$BF,$FF
+
+;; clear the six charsets (6 KB at vramfont), for the test frame
+clear_charsets
+    LDA #<vramfont
+    STA SPR_DST
+    LDA #>vramfont
+    STA SPR_DST+1
+    LDX #24                     ; 24 pages
+cc_page
+    LDY #0
+    LDA #0
+cc_byte
+    STA (SPR_DST),Y
+    INY
+    BNE cc_byte
+    INC SPR_DST+1
+    DEX
+    BNE cc_page
+    RTS
+
+TL_V=$BF10
+TL_X=$BF11
+TL_B=$BF12
+TL_A=$BF13
+TL_W=$BF14
+TL_H=$BF15
+TL_C0=$BF16
+TL_Y0=$BF17
+TL_K=$BF18
+TL_L=$BF19
+TL_P=$F4                       ; 2 bytes, zero page (indirect addressing)
+TL_I=$BF1C
+TL_J=$BF1D
+TL_DC=$BF1E
+TL_FL=$BF21                    ; square_orientation: bit7 = flip X, bit6 = flip Y
+TL_SK=$BF22                    ; source column (after flip)
+TL_SL=$BF23                    ; source line within sprite (after flip)
+TL_CAL=$BF24                   ; 1 while calib_test drives tt_draw
+TL_T=$BF27                     ; temporaries for the transparent write
+TL_N=$BF28
+TL_O=$BF29
+TL_PH=$BF2B                    ; pixel phase of the sprite (0..3 pixels into the first byte)
+TL_S=$BF2C                     ; 2*phase: bits shifted right
+TL_T8=$BF2D                    ; 8-2*phase: bits brought in from the previous column
+TL_Q=$E0                       ; 2 bytes, zero page: pointer to the previous column (phase shift)
+DUMP_TABLE=$BA90               ; DEBUG: 70 bytes, one per window square (10 x 7), see bg_tiles_test
+DUMP_DONE=$BAD6                ; DEBUG: 1 when bg_tiles_test has finished a pass
+FLAG_TABLE=$9A00               ; DEBUG: 70 bytes, path taken in determine_background (0 plain, 1 hash hit, 2 object number without hash entry)
+DBG_OBJFLAG=$BF2A              ; DEBUG: path flag for the last determine_background call
+
+tile_colbase_lo
+    :32 dta <(sprite_test_data+[#*81])
+tile_colbase_hi
+    :32 dta >(sprite_test_data+[#*81])
+
+clear_test_bbc_vram
+    LDA #<vram
+    STA screen_address
+    LDA #>vram
+    STA screen_address+1
+    LDX #32
+    LDY #0
+    LDA #0
+ctv_page
+ctv_byte
+    STA (screen_address),Y
+    INY
+    BNE ctv_byte
+    INC screen_address+1
+    DEX
+    BNE ctv_page
+    RTS
+
+bg_test_reference
+    LDX #69
+    LDA #$FF
+btr_clear
+    STA DUMP_TABLE,X
+    STA FLAG_TABLE,X
+    DEX
+    BPL btr_clear
+    JSR change_display_mode
+    LDA #$FF
+    STA TL_J
+btr_j
+    LDA #$FF
+    STA TL_I
+btr_i
+    LDA TL_J
+    ASL
+    STA TL_O
+    ASL
+    ASL
+    CLC
+    ADC TL_O
+    CLC
+    ADC TL_I
+    CLC
+    ADC #11
+    AND #$3F
+    STA TL_V
+    LDA TL_V
+    STA square_sprite
+    LDA #0
+    STA square_orientation
+    STA DBG_OBJFLAG
+    LDA screen_start_square_x
+    CLC
+    ADC TL_I
+    STA square_x
+    LDA screen_start_square_y
+    CLC
+    ADC TL_J
+    STA square_y
+    LDA TL_V
+    JSR setup_background_sprite_values_from_08_09
+    LDA this_object_palette
+    EOR #$01
+    STA this_object_palette_old
+    LDA #0
+    STA this_object_flipping_flags
+    STA this_object_flipping_flags_old
+    STA this_object_x_low
+    STA this_object_x_low_old
+    LDX TL_V
+    LDA background_y_offset_lookup,X
+    AND #$F0
+    STA this_object_y_low
+    STA this_object_y_low_old
+    LDA #$FF
+    STA sprite_and
+    LDA #0
+    STA skip_sprite_calculation_flags
+    STA this_object_flags
+    STA this_object_flags_old
+    JSR plot_sprite
+    LDA TL_J
+    ASL
+    STA TL_O
+    ASL
+    ASL
+    CLC
+    ADC TL_O
+    CLC
+    ADC TL_I
+    CLC
+    ADC #11
+    TAX
+    LDA TL_V
+    STA FLAG_TABLE,X
+    LDX TL_V
+    LDA background_sprite_lookup,X
+    AND #$7F
+    STA TL_X
+    LDA TL_J
+    ASL
+    STA TL_O
+    ASL
+    ASL
+    CLC
+    ADC TL_O
+    CLC
+    ADC TL_I
+    CLC
+    ADC #11
+    TAX
+    LDA TL_X
+    STA DUMP_TABLE,X
+    INC TL_I
+    LDA TL_I
+    CMP #9
+    BEQ btr_row
+    JMP btr_i
+btr_row
+    INC TL_J
+    LDA TL_J
+    CMP #4
+    BEQ btr_done
+    JMP btr_j
+btr_done
+    LDA #1
+    STA DUMP_DONE
+    JSR change_display_mode
+    RTS
+
+bg_tiles_test
+    LDX #69                     ; DEBUG: clear the square table ($FF = empty or skipped)
+    LDA #$FF
+dt_clr
+    STA DUMP_TABLE,X
+    STA FLAG_TABLE,X
+    DEX
+    BPL dt_clr
+    LDA screen_start_square_x_low
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    STA screen_start_square_x_low_tiles
+    LDA screen_start_square_y_low
+    LSR
+    LSR
+    LSR
+    STA screen_start_square_y_low_tiles
+    LDA #$FF                    ; start one square above/left of the window (sprites can reach into it)
+    STA TL_J
+tt_j
+    LDA #$FF
+    STA TL_I
+tt_i
+    LDA screen_start_square_x
+    CLC
+    ADC TL_I
+    STA square_x
+    LDA screen_start_square_y
+    CLC
+    ADC TL_J
+    STA square_y
+    IFT BG_RENDERER_MODE=2
+        LDA TL_J                    ; test value = window slot modulo 64
+        ASL
+        STA TL_O
+        ASL
+        ASL
+        CLC
+        ADC TL_O
+        CLC
+        ADC TL_I
+        CLC
+        ADC #11
+        AND #$3F
+        STA TL_V
+        LDA #0
+        STA square_orientation
+        LDA TL_V
+        STA square_sprite
+        JSR setup_background_sprite_values_from_08_09
+        LDA #0
+        STA DBG_OBJFLAG
+    ELS
+        JSR determine_background
+        STA TL_V
+    EIF
+    IFT BG_RENDERER_MODE=2
+        JMP tt_has_bg             ; render every test value, including $19
+    ELS
+    LDA TL_V
+    CMP #$19
+    BNE tt_has_bg
+    JMP tt_next
+    EIF
+tt_has_bg
+    LDA TL_J                    ; DEBUG: table index = (j+1)*10 + (i+1)
+    ASL
+    STA TL_O
+    ASL
+    ASL
+    CLC
+    ADC TL_O
+    CLC
+    ADC TL_I
+    CLC
+    ADC #11
+    TAX
+    LDA DBG_OBJFLAG             ; DEBUG: pack path in top 2 bits, terrain value in low 6
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    ORA TL_V
+    STA FLAG_TABLE,X
+    IFT BG_RENDERER_MODE=2
+        LDA this_object_sprite
+        TAX
+        STX TL_X
+    ELS
+    LDA TL_V
+    TAX
+    LDA background_sprite_lookup,X
+    AND #$7F
+    TAX
+    STX TL_X
+    EIF
+    LDX TL_X
+    LDA sprite_height_lookup,X
+    LSR
+    LDA sprite_width_lookup,X
+    ROR
+    AND #$80
+    ROR
+    EOR square_orientation
+    STA TL_FL
+    LDA TL_J                    ; DEBUG: recompute square index for sprite table
+    ASL
+    STA TL_O
+    ASL
+    ASL
+    CLC
+    ADC TL_O
+    CLC
+    ADC TL_I
+    CLC
+    ADC #11
+    TAX
+    LDA TL_X
+    STA DUMP_TABLE,X
+    LDX TL_X
+    LDA sprite_offset_a_lookup,X
+    STA TL_A
+    LDA sprite_width_lookup,X   ; columns = ceil((px + phase) / 4), px = width>>4, phase = (a>>4)&3 (plotter)
+    LSR
+    LSR
+    LSR
+    LSR
+    STA TL_W
+    LDA sprite_offset_a_lookup,X
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    CLC
+    ADC TL_W
+    CLC
+    ADC #3
+    LSR
+    LSR
+    STA TL_W
+    LDA sprite_offset_a_lookup,X ; pixel phase (plotter: bits 4-5 of a)
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_PH
+    ASL
+    STA TL_S
+    LDA #8
+    SEC
+    SBC TL_S
+    STA TL_T8
+    LDA sprite_height_lookup,X
+    LSR
+    LSR
+    LSR
+    STA TL_H
+    LDA TL_A                    ; column = (rowbyteoffset of a) & $1f
+    ASL
+    ADC #0
+    ASL
+    ADC #0
+    AND #$1F
+    STA TL_A
+    LDA TL_I                    ; dest column = i*4 - (x_low>>6)
+    ASL
+    ASL
+    SEC
+    SBC screen_start_square_x_low_tiles
+    STA TL_C0
+    LDA TL_J                    ; dest first line = j*32 - (y_low>>3)
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    SEC
+    SBC screen_start_square_y_low_tiles
+    STA TL_Y0
+    LDA DBG_OBJFLAG
+    CMP #2
+    BEQ tt_yoff_done
+    LDX TL_V
+    LDA background_y_offset_lookup,X
+    AND #$F0
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TL_Y0
+    STA TL_Y0
+tt_yoff_done
+tt_draw                      ; entry for calib_test: TL_X, TL_FL, TL_A/B/W/H, TL_C0/Y0 set
+    INC TL_H                    ; sprite height is encoded as height - 1
+    LDX TL_X
+    LDA #0
+    BIT TL_FL
+    BVC tt_source_start         ; TEST: inverted V-flag mapping
+    LDA sprite_height_lookup,X
+    AND #$F8
+tt_source_start
+    CLC
+    ADC sprite_offset_b_lookup,X
+    ADC #$00                    ; preserve carry from packed b + height
+    ASL
+    ADC #$00                    ; rotate left through carry twice, as plotter
+    ASL
+    ADC #$00
+    STA TL_O
+    AND #$0F
+    ASL
+    ASL
+    ASL
+    STA TL_B
+    LDA TL_O
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    ORA TL_B
+    STA TL_B                    ; source row decoded from the rotated byte address
+    LDA TL_FL
+    BPL tt_phase_ready
+    LDX TL_X
+    LDA sprite_width_lookup,X
+    LSR
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TL_PH
+    ADC #1
+    AND #3
+    EOR #3
+    CLC
+    ADC #1
+    AND #3
+    STA TL_PH                    ; mirrored phase = -(width + phase) mod 4
+    ASL
+    STA TL_S
+    LDA #8
+    SEC
+    SBC TL_S
+    STA TL_T8
+tt_phase_ready
+    LDA #0
+    STA TL_K
+tt_k
+    LDA TL_K
+    CMP TL_W
+    BNE tt_k_go
+    JMP tt_kend
+tt_k_go
+    LDA TL_C0                   ; dest column (clip to 0..31)
+    CLC
+    ADC TL_K
+    STA TL_DC
+    CMP #32
+    BCC tt_kin
+    JMP tt_kskip
+tt_kin
+    LDA TL_K                    ; source column: reversed when flipped in X
+    BIT TL_FL
+    BPL tt_sk_nf
+    LDA TL_W
+    SEC
+    SBC #1
+    SEC
+    SBC TL_K
+tt_sk_nf
+    STA TL_SK
+    LDA TL_A                    ; source column (wraps in 32 columns)
+    CLC
+    ADC TL_SK
+    AND #$1F
+    TAX
+    LDA tile_colbase_lo,X
+    STA TL_P
+    LDA tile_colbase_hi,X
+    STA TL_P+1
+    LDA TL_A                    ; adjacent source column for phase alignment
+    CLC
+    ADC TL_SK
+    BIT TL_FL
+    BMI tt_q_next
+    SEC
+    SBC #1
+    JMP tt_q_ready
+tt_q_next
+    CLC
+    ADC #1
+tt_q_ready
+    AND #$1F
+    TAX
+    LDA tile_colbase_lo,X
+    STA TL_Q
+    LDA tile_colbase_hi,X
+    STA TL_Q+1
+    LDA #0
+    STA TL_L
+tt_l
+    LDA TL_L
+    CMP TL_H
+    BNE tt_lgo
+    JMP tt_kskip
+tt_lgo
+    LDA TL_B                    ; select source row in the current column
+    BIT TL_FL
+    BVC tt_sl_forward
+    SEC
+    SBC TL_L                    ; unflipped plotter advances the pointer backward
+    JMP tt_sl_done
+tt_sl_forward
+    CLC
+    ADC TL_L                    ; V-flipped plotter advances the pointer forward
+tt_sl_done
+tt_sl_nf
+    STA TL_SL
+    LDA TL_SL
+    CMP #81
+    BCC tt_lin
+    JMP tt_lskip
+tt_lin
+    TAY
+    LDA (TL_P),Y
+    BIT TL_FL                   ; flipped in X: reverse the 2-bit pixels of the byte
+    BMI tt_fx
+    JMP tt_nofx
+tt_fx
+    TAX
+    LDA pix_rev,X
+tt_nofx
+    LDX TL_PH
+    BEQ tt_nophase
+    STA TL_O                    ; current byte
+    LDA TL_K                    ; first destination column has no adjacent sprite byte
+    BEQ tt_zprev
+    LDA (TL_Q),Y                ; previous column, same line
+    BIT TL_FL
+    BPL tt_phase_neighbor_ready
+    TAX
+    LDA pix_rev,X
+tt_phase_neighbor_ready
+    STA TL_N
+    JMP tt_prevdone
+tt_zprev
+    LDA #0
+    STA TL_N
+tt_prevdone
+    LDA TL_O
+    LDX TL_S
+    BEQ tt_shr_done
+tt_shr
+    LSR
+    DEX
+    BNE tt_shr
+tt_shr_done
+    STA TL_O
+    LDA TL_N
+    LDX TL_T8
+tt_shl
+    ASL
+    DEX
+    BNE tt_shl
+    ORA TL_O
+tt_nophase
+    PHA
+    LDA TL_Y0                   ; dest line = Y0 + L (must be 0..191)
+    CLC
+    ADC TL_L
+    CMP #192
+    BCC tt_lok
+    JMP tt_lpop
+tt_lok
+    STA SPR_Y
+    LDA TL_DC
+    STA SPR_COL
+    JSR glyph_addr             ; SPR_DST already includes the line within the cell (Y&7)
+    LDY #0
+    PLA
+    STA TL_T                    ; pixel value 0 is transparent: keep what is already drawn
+    LSR
+    ORA TL_T
+    AND #$55                    ; nonzero pixels, low bit of each pair
+    STA TL_N
+    ASL
+    ORA TL_N                    ; mask of nonzero pixels (both bits of each pair)
+    STA TL_N
+    EOR #$FF
+    AND (SPR_DST),Y             ; old pixels where the sprite pixel is 0
+    STA TL_O
+    LDA TL_T
+    AND TL_N
+    ORA TL_O
+    STA (SPR_DST),Y
+    JMP tt_lskip
+tt_lpop
+    PLA
+tt_lskip
+    INC TL_L
+    JMP tt_l
+tt_kskip
+    INC TL_K
+    JMP tt_k
+tt_kend
+    LDA TL_CAL                  ; calibration: return to calib_test instead of the next square
+    BNE tt_kret
+    JMP tt_next
+tt_kret
+    RTS
+
+tt_next
+    INC TL_I
+    LDA TL_I
+    CMP #9
+    BEQ tt_row
+    JMP tt_i
+tt_row
+    INC TL_J
+    LDA TL_J
+    IFT BG_RENDERER_MODE=2
+        CMP #4                      ; match 128-line BBC reference window
+    ELS
+    CMP #6                      ; rows -1..5
+    EIF
+    BEQ tt_done
+    JMP tt_j
+tt_done
+    LDA #1                      ; DEBUG: table complete
+    STA DUMP_DONE
+    RTS
+
+;; Calibration: sprites cal_spr[0..7] (columns) drawn with flip cal_flip[0..2] (rows),
+;; slot s at dest column 4*s, row r at dest line 32*r. Uses tt_draw above.
+CAL_R=$BF25
+CAL_S=$BF26
+cal_spr
+    dta 0,1,36,39,43,52,68,98
+cal_flip
+    dta $00,$80,$40             ; normal, flip X (bit 7), flip Y (bit 6)
+
+calib_test
+    LDA #1
+    STA TL_CAL
+    LDA #0
+    STA CAL_R
+cal_rloop
+    LDX CAL_R
+    LDA cal_flip,X
+    STA TL_FL
+    LDA #0
+    STA CAL_S
+cal_sloop
+    LDX CAL_S
+    LDA cal_spr,X
+    TAX
+    STX TL_X
+    LDA sprite_offset_a_lookup,X
+    STA TL_A
+    LDA sprite_width_lookup,X   ; columns = ceil((px + phase) / 4), px = width>>4, phase = (a>>4)&3 (plotter)
+    LSR
+    LSR
+    LSR
+    LSR
+    STA TL_W
+    LDA sprite_offset_a_lookup,X
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    CLC
+    ADC TL_W
+    CLC
+    ADC #3
+    LSR
+    LSR
+    STA TL_W
+    LDA sprite_offset_a_lookup,X ; pixel phase (plotter: bits 4-5 of a)
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_PH
+    ASL
+    STA TL_S
+    LDA #8
+    SEC
+    SBC TL_S
+    STA TL_T8
+    LDA sprite_height_lookup,X
+    LSR
+    LSR
+    LSR
+    STA TL_H
+    LDA TL_A                    ; column = (rowbyteoffset of a) & $1f
+    ASL
+    ADC #0
+    ASL
+    ADC #0
+    AND #$1F
+    STA TL_A
+    LDA CAL_S                   ; dest column = 4*slot
+    ASL
+    ASL
+    STA TL_C0
+    LDA CAL_R                   ; dest first line = 32*row
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    STA TL_Y0
+    JSR tt_draw
+    INC CAL_S
+    LDA CAL_S
+    CMP #8
+    BEQ cal_sdone
+    JMP cal_sloop
+cal_sdone
+    INC CAL_R
+    LDA CAL_R
+    CMP #3
+    BEQ cal_rdone
+    JMP cal_rloop
+cal_rdone
+    LDA #0
+    STA TL_CAL
+    RTS
+
+; low parts of the window origin, in the units the tile code needs
+screen_start_square_x_low_tiles=$BF1F
+screen_start_square_y_low_tiles=$BF20
+
 ;; ---------------------------------------------------------------------------
 ;; Game VRAM -> charsets. The game draws BBC mode 2 (4 bpp, 2 pixels per byte):
 ;; the colour bits of pixel 0 are bits 1,3,5,7 and of pixel 1 bits 0,2,4,6.
@@ -14650,8 +15445,8 @@ sprite_data
     ins "exile_sprite_data_raw_bitmap.xex"
 
 	org $B000
-sprite_test_data
-    ins "sprite_test_atari_columns_128x80.bin"
+sprite_test_data                ; full sprite sheet, Atari column layout (sprites_convert.py), 81 bytes per column
+    ins "sprite_sheet_atari_columns_128x81.bin"
 
 /*
 IFT SRAM
