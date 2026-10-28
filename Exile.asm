@@ -1850,6 +1850,25 @@ secondary_stack_free_slot_found
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 .proc plot_object
+    IFT BG_NATIVE_FOREGROUND_TEST=1
+    LDX current_object
+    LDA this_object_x
+    STA tt_fg_x,X
+    LDA this_object_x_low
+    STA tt_fg_x_low,X
+    LDA this_object_y
+    STA tt_fg_y,X
+    LDA this_object_y_low
+    STA tt_fg_y_low,X
+    LDA this_object_sprite
+    STA tt_fg_sprite,X
+    LDA this_object_palette
+    STA tt_fg_palette,X
+    LDA this_object_flipping_flags
+    STA tt_fg_flip,X
+    LDA this_object_flags
+    STA tt_fg_flags,X
+    EIF
 	LDA #%00111111                  ; objects are plotted and $3f
 	STA sprite_and
 	JSR plot_sprite
@@ -2410,6 +2429,16 @@ do_the_plotting
     STY $22
     
 dont_swap
+    IFT BG_SILHOUETTE_TEST=1
+        LDA #$55
+        STA $01
+        STA $10
+        STA $11
+        LDA #$AA
+        STA $02
+        STA $20
+        STA $22
+    EIF
 
 ;;  Calculate the offset between rows in the sprite
 
@@ -4111,10 +4140,10 @@ no_background_object_in_hash
 ;;  use_background_object_from_hash                                               ; A = handler_lookup if in hash, square_sprite if not
 L1761
     STA square_sprite
+    LDX background_objects_range,Y
 
 ; Undo sentinel.
 
-    LDX background_objects_range,Y    
     PLA                               
     STA background_objects_x_lookup,X 
 
@@ -4521,7 +4550,72 @@ collided_in_last_cycle
     dta $00
 player_teleporting_flag
     dta $00
-BG_RENDERER_MODE=1             ; 0 = BBC reference, 1 = game map, 2 = tile test map, 3 = reference test map
+.IFNDEF BG_RENDERER_MODE
+BG_RENDERER_MODE=1             ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
+.ENDIF
+.IFNDEF BG_FLIP_TEST
+BG_FLIP_TEST=0
+.ENDIF
+.IFNDEF BG_PALETTE_TEST
+BG_PALETTE_TEST=0
+.ENDIF
+.IFNDEF BG_SILHOUETTE_TEST
+BG_SILHOUETTE_TEST=0
+.ENDIF
+.IFNDEF BG_SINGLE_SPRITE_TEST
+BG_SINGLE_SPRITE_TEST=0
+.ENDIF
+.IFNDEF BG_SINGLE_SPRITE_INDEX
+BG_SINGLE_SPRITE_INDEX=8
+.ENDIF
+.IFNDEF BG_SINGLE_SPRITE_I
+BG_SINGLE_SPRITE_I=3
+.ENDIF
+.IFNDEF BG_SINGLE_SPRITE_J
+BG_SINGLE_SPRITE_J=1
+.ENDIF
+.IFNDEF BG_LOCAL_REGION_TEST
+BG_LOCAL_REGION_TEST=0
+.ENDIF
+.IFNDEF BG_SKIP_REFERENCE_CELL_INDEX
+BG_SKIP_REFERENCE_CELL_INDEX=255
+.ENDIF
+.IFNDEF BG_SKIP_REFERENCE_CELL_SETUP_INDEX
+BG_SKIP_REFERENCE_CELL_SETUP_INDEX=255
+.ENDIF
+.IFNDEF BG_REGION_MIN_I
+BG_REGION_MIN_I=1
+.ENDIF
+.IFNDEF BG_REGION_MAX_I
+BG_REGION_MAX_I=2
+.ENDIF
+.IFNDEF BG_REGION_MIN_J
+BG_REGION_MIN_J=0
+.ENDIF
+.IFNDEF BG_REGION_MAX_J
+BG_REGION_MAX_J=1
+.ENDIF
+.IFNDEF BG_REGION_REVERSE_ORDER
+BG_REGION_REVERSE_ORDER=0
+.ENDIF
+.IFNDEF BG_RAW_BBC_MASK_TEST
+BG_RAW_BBC_MASK_TEST=0
+.ENDIF
+.IFNDEF BG_STOP_AFTER_RENDER_TEST
+BG_STOP_AFTER_RENDER_TEST=0
+.ENDIF
+.IFNDEF BG_NATIVE_FOREGROUND_TEST
+BG_NATIVE_FOREGROUND_TEST=0
+.ENDIF
+.IFNDEF BG_NATIVE_FOREGROUND_SLOT_TEST
+BG_NATIVE_FOREGROUND_SLOT_TEST=255
+.ENDIF
+.IFNDEF BG_PALETTE_SWAP_INVERT_TEST
+BG_PALETTE_SWAP_INVERT_TEST=0
+.ENDIF
+.IFNDEF BG_PALETTE_TEST_SPRITE
+BG_PALETTE_TEST_SPRITE=5
+.ENDIF
 main_loop
     LSR whistle1_played         ; reset whistle1
     INC loop_counter            ; increment loop counter
@@ -4561,10 +4655,26 @@ L19E7
         JSR vram_convert        ; BBC VRAM reference renderer
     ELI BG_RENDERER_MODE=1
         JSR bg_tiles_test       ; native game map
+        IFT BG_NATIVE_FOREGROUND_TEST=1
+            JSR tt_draw_foreground_objects
+        EIF
     ELS
         JSR vram_convert        ; BBC VRAM game reference
     EIF
-    JMP main_loop               ; go round the loop again
+    IFT BG_SILHOUETTE_TEST=1
+        JSR collapse_charsets
+    EIF
+    IFT BG_RENDERER_MODE=2
+        JMP *
+    ELI BG_RENDERER_MODE=3
+        JMP *
+    ELS
+        IFT BG_STOP_AFTER_RENDER_TEST=1
+            JMP *
+        ELS
+            JMP main_loop       ; go round the loop again
+        EIF
+    EIF
 handle_background_object
     TSX
     STX copy_of_stack_pointer
@@ -6840,7 +6950,7 @@ L28AE
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+    LDA #$80
 zero_memory_and_loop_endlessly
     LDA #$00
     TAY
@@ -14274,6 +14384,238 @@ bl_done
     RTS
 
 ; X = sprite column (0..255), SPR_L = line. A = sprite byte, 0 if outside.
+
+tt_draw_foreground_objects
+    LDA #1
+    STA TL_CAL
+    LDA #0
+    STA TL_I
+tt_foreground_loop
+    LDX TL_I
+    IFT BG_NATIVE_FOREGROUND_SLOT_TEST<16
+        LDA TL_I
+        CMP #BG_NATIVE_FOREGROUND_SLOT_TEST
+        BEQ tt_foreground_slot_selected
+        JMP tt_foreground_next
+tt_foreground_slot_selected
+    EIF
+    LDA tt_fg_y,X
+    BNE tt_foreground_has_object
+    JMP tt_foreground_next
+tt_foreground_has_object
+    LDA tt_fg_flags,X
+    AND #$20
+    BEQ tt_foreground_visible
+    JMP tt_foreground_next
+tt_foreground_visible
+    LDA tt_fg_sprite,X
+    STA TL_X
+    TAY
+    LDA tt_fg_palette,X
+    STA this_object_palette
+    LDA tt_fg_x_low,X
+    STA this_object_x_low
+    SEC
+    SBC screen_start_square_x_low
+    STA TL_XD
+    LDA tt_fg_x,X
+    SEC
+    SBC screen_start_square_x
+    ASL
+    ASL
+    STA TL_C0
+    LDA TL_XD
+    BCC tt_foreground_x_negative
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    JMP tt_foreground_x_add
+tt_foreground_x_negative
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    SEC
+    SBC #4
+tt_foreground_x_add
+    CLC
+    ADC TL_C0
+    STA TL_C0
+    LDA TL_XD
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_DPH
+    STA TL_MAP_TMP
+    LDA sprite_offset_a_lookup,Y
+    STA TL_A
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_T
+    LDA TL_MAP_TMP
+    SEC
+    SBC TL_T
+    AND #3
+    STA TL_PH
+    ASL
+    STA TL_S
+    LDA #8
+    SEC
+    SBC TL_S
+    STA TL_T8
+    LDA sprite_width_lookup,Y
+    LSR
+    LSR
+    LSR
+    LSR
+    STA TL_W
+    LDA TL_MAP_TMP
+    CLC
+    ADC TL_W
+    CLC
+    ADC #3
+    LSR
+    LSR
+    STA TL_W
+    LDA TL_A
+    ASL
+    ADC #0
+    ASL
+    ADC #0
+    AND #$1F
+    STA TL_A
+    LDA TL_T
+    CMP #2
+    BCC tt_foreground_source_column_ready
+    LDA tt_fg_flip,X
+    BMI tt_foreground_source_column_ready
+    INC TL_A
+    LDA TL_A
+    AND #$1F
+    STA TL_A
+tt_foreground_source_column_ready
+    LDA TL_X
+    CMP #$5F
+    BNE tt_foreground_source_column_done
+    INC TL_A
+    LDA TL_A
+    AND #$1F
+    STA TL_A
+tt_foreground_source_column_done
+    LDX TL_X
+    LDA sprite_height_lookup,X
+    LSR
+    LDA sprite_width_lookup,X
+    ROR
+    AND #$80
+    ROR
+    LDY TL_I
+    EOR tt_fg_flip,Y
+    AND #$C0
+    STA TL_FL
+    LDA #0
+    BIT TL_FL
+    BVC tt_foreground_source_start
+    LDX TL_X
+    LDA sprite_height_lookup,X
+    AND #$F8
+tt_foreground_source_start
+    CLC
+    ADC sprite_offset_b_lookup,X
+    ADC #0
+    ASL
+    ADC #0
+    ASL
+    ADC #0
+    STA TL_O
+    AND #$0F
+    ASL
+    ASL
+    ASL
+    STA TL_B
+    LDA TL_O
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    ORA TL_B
+    STA TL_B
+    LDA sprite_height_lookup,X
+    LSR
+    LSR
+    LSR
+    STA TL_H
+    LDY TL_I
+    LDA tt_fg_y,Y
+    SEC
+    SBC screen_start_square_y
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    SEC
+    SBC screen_start_square_y_low_tiles
+    STA TL_Y0
+    LDX TL_X
+    LDY TL_I
+    LDA tt_fg_y_low,Y
+    CLC
+    ADC sprite_height_lookup,X
+    LSR
+    LSR
+    LSR
+    STA TL_MAP_TMP
+    LDA sprite_height_lookup,X
+    LSR
+    LSR
+    LSR
+    STA TL_O
+    LDA TL_MAP_TMP
+    SEC
+    SBC TL_O
+    CLC
+    ADC TL_Y0
+    STA TL_Y0
+    JSR tt_draw
+tt_foreground_next
+    INC TL_I
+    LDA TL_I
+    CMP #16
+    BEQ tt_foreground_done
+    JMP tt_foreground_loop
+tt_foreground_done
+    LDA #0
+    STA TL_CAL
+    RTS
+
+tt_fg_x
+    :16 dta 0
+tt_fg_x_low
+    :16 dta 0
+tt_fg_y
+    :16 dta 0
+tt_fg_y_low
+    :16 dta 0
+tt_fg_sprite
+    :16 dta 0
+tt_fg_palette
+    :16 dta 0
+tt_fg_flip
+    :16 dta 0
+tt_fg_flags
+    :16 dta 0
 fetch_byte
     CPX #32
     BCS fetch_none
@@ -14483,6 +14825,31 @@ cc_byte
     BNE cc_page
     RTS
 
+collapse_charsets
+    LDA #<vramfont
+    STA SPR_DST
+    LDA #>vramfont
+    STA SPR_DST+1
+    LDX #24
+cs_page
+    LDY #0
+cs_byte
+    LDA (SPR_DST),Y
+    PHA
+    AND #$55
+    STA SPR_T
+    PLA
+    AND #$AA
+    LSR
+    ORA SPR_T
+    STA (SPR_DST),Y
+    INY
+    BNE cs_byte
+    INC SPR_DST+1
+    DEX
+    BNE cs_page
+    RTS
+
 TL_V=$BF10
 TL_X=$BF11
 TL_B=$BF12
@@ -14491,6 +14858,7 @@ TL_W=$BF14
 TL_H=$BF15
 TL_C0=$BF16
 TL_Y0=$BF17
+TL_DPH=$BF2F                   ; destination pixel phase, independent of source shift
 TL_K=$BF18
 TL_L=$BF19
 TL_P=$F4                       ; 2 bytes, zero page (indirect addressing)
@@ -14505,18 +14873,25 @@ TL_T=$BF27                     ; temporaries for the transparent write
 TL_N=$BF28
 TL_O=$BF29
 TL_PH=$BF2B                    ; pixel phase of the sprite (0..3 pixels into the first byte)
+TL_MAP=$BF30
+TL_TAIL=$BF2E                  ; valid pixels in the final destination byte
+TL_PC=$BF40
+TL_MAP_TMP=$BF44
+TL_XD=$BF45
 TL_S=$BF2C                     ; 2*phase: bits shifted right
 TL_T8=$BF2D                    ; 8-2*phase: bits brought in from the previous column
 TL_Q=$E0                       ; 2 bytes, zero page: pointer to the previous column (phase shift)
 DUMP_TABLE=$BA90               ; DEBUG: 70 bytes, one per window square (10 x 7), see bg_tiles_test
 DUMP_DONE=$BAD6                ; DEBUG: 1 when bg_tiles_test has finished a pass
-FLAG_TABLE=$9A00               ; DEBUG: 70 bytes, path taken in determine_background (0 plain, 1 hash hit, 2 object number without hash entry)
+FLAG_TABLE=$BC00               ; DEBUG: 70 bytes, path taken in determine_background (0 plain, 1 hash hit, 2 object number without hash entry)
 DBG_OBJFLAG=$BF2A              ; DEBUG: path flag for the last determine_background call
 
 tile_colbase_lo
     :32 dta <(sprite_test_data+[#*81])
 tile_colbase_hi
     :32 dta >(sprite_test_data+[#*81])
+tt_tail_mask
+    dta $00,$C0,$F0,$FC,$FF
 
 clear_test_bbc_vram
     LDA #<vram
@@ -14545,12 +14920,61 @@ btr_clear
     DEX
     BPL btr_clear
     JSR change_display_mode
+    IFT BG_LOCAL_REGION_TEST=1
+        IFT BG_REGION_REVERSE_ORDER=1
+            LDA #BG_REGION_MAX_J
+        ELS
+            LDA #$FF
+        EIF
+    ELS
     LDA #$FF
+    EIF
     STA TL_J
 btr_j
+    IFT BG_LOCAL_REGION_TEST=1
+        IFT BG_REGION_REVERSE_ORDER=1
+            LDA #BG_REGION_MAX_I
+        ELS
+            LDA #$FF
+        EIF
+    ELS
     LDA #$FF
+    EIF
     STA TL_I
 btr_i
+    IFT BG_SINGLE_SPRITE_TEST=1
+        LDA TL_I
+        CMP #BG_SINGLE_SPRITE_I
+        BEQ btr_single_test_x
+        JMP btr_skip_test_cell
+btr_single_test_x
+    LDA TL_J
+    CMP #BG_SINGLE_SPRITE_J
+    BEQ btr_single_test_cell
+        JMP btr_skip_test_cell
+btr_single_test_cell
+    ELS
+    IFT BG_LOCAL_REGION_TEST=1
+        LDA TL_I
+        CMP #BG_REGION_MIN_I
+        BCS btr_region_i_min_ok
+        JMP btr_skip_test_cell
+btr_region_i_min_ok
+        CMP #BG_REGION_MAX_I+1
+        BCC btr_region_j_check
+        JMP btr_skip_test_cell
+btr_region_j_check
+        LDA TL_J
+        CMP #BG_REGION_MIN_J
+        BCS btr_region_j_min_ok
+        JMP btr_skip_test_cell
+btr_region_j_min_ok
+        CMP #BG_REGION_MAX_J+1
+        BCC btr_region_check_done
+        JMP btr_skip_test_cell
+btr_region_check_done
+    EIF
+    EIF
     LDA TL_J
     ASL
     STA TL_O
@@ -14564,9 +14988,42 @@ btr_i
     ADC #11
     AND #$3F
     STA TL_V
+    IFT BG_SINGLE_SPRITE_TEST=1
+        LDA #BG_SINGLE_SPRITE_INDEX
+        STA TL_V
+    EIF
+    IFT BG_SKIP_REFERENCE_CELL_SETUP_INDEX<$40
+        LDA TL_V
+        CMP #BG_SKIP_REFERENCE_CELL_SETUP_INDEX
+        BNE btr_setup_reference_cell
+        JMP btr_skip_test_cell
+btr_setup_reference_cell
+    EIF
     LDA TL_V
     STA square_sprite
+    IFT BG_FLIP_TEST=1
+        LDA TL_I
+        AND #1
+        ASL
+        ASL
+        ASL
+        ASL
+        ASL
+        ASL
+        ASL
+        STA TL_O
+        LDA TL_J
+        AND #1
+        ASL
+        ASL
+        ASL
+        ASL
+        ASL
+        ASL
+        ORA TL_O
+    ELS
     LDA #0
+    EIF
     STA square_orientation
     STA DBG_OBJFLAG
     LDA screen_start_square_x
@@ -14582,6 +15039,7 @@ btr_i
     LDA this_object_palette
     EOR #$01
     STA this_object_palette_old
+    IFT BG_FLIP_TEST=0
     LDA #0
     STA this_object_flipping_flags
     STA this_object_flipping_flags_old
@@ -14592,13 +15050,44 @@ btr_i
     AND #$F0
     STA this_object_y_low
     STA this_object_y_low_old
+    EIF
+    IFT BG_PALETTE_TEST=1
+        LDA #BG_PALETTE_TEST_SPRITE
+        STA this_object_sprite
+        STA this_object_sprite_old
+        LDA #0
+        STA this_object_flipping_flags
+        STA this_object_flipping_flags_old
+        STA this_object_x_low
+        STA this_object_x_low_old
+        STA this_object_y_low
+        STA this_object_y_low_old
+        LDA TL_V
+        AND #$0F
+        ORA #$B0
+        STA this_object_palette
+        EOR #$01
+        STA this_object_palette_old
+    EIF
+    LDA #$FF
+    STA this_object_y_old
+    LDA #$F8
+    STA this_object_y_low_old
     LDA #$FF
     STA sprite_and
     LDA #0
     STA skip_sprite_calculation_flags
     STA this_object_flags
     STA this_object_flags_old
+    IFT BG_SKIP_REFERENCE_CELL_INDEX<$40
+        LDA TL_V
+        CMP #BG_SKIP_REFERENCE_CELL_INDEX
+        BNE btr_plot_sprite
+        JMP btr_skip_plot_sprite
+btr_plot_sprite
+    EIF
     JSR plot_sprite
+btr_skip_plot_sprite
     LDA TL_J
     ASL
     STA TL_O
@@ -14631,11 +15120,37 @@ btr_i
     TAX
     LDA TL_X
     STA DUMP_TABLE,X
+btr_skip_test_cell
+    IFT BG_LOCAL_REGION_TEST=1
+        IFT BG_REGION_REVERSE_ORDER=1
+            DEC TL_I
+            LDA TL_I
+            CMP #(BG_REGION_MIN_I-1)
+            BNE btr_region_reverse_same_row
+            DEC TL_J
+            LDA TL_J
+            CMP #(BG_REGION_MIN_J-1)
+            BNE btr_region_reverse_next_row
+            JMP btr_done
+btr_region_reverse_next_row
+            LDA #BG_REGION_MAX_I
+            STA TL_I
+btr_region_reverse_same_row
+            JMP btr_i
+        ELS
+            INC TL_I
+            LDA TL_I
+            CMP #9
+            BEQ btr_row
+            JMP btr_i
+        EIF
+    ELS
     INC TL_I
     LDA TL_I
     CMP #9
     BEQ btr_row
     JMP btr_i
+    EIF
 btr_row
     INC TL_J
     LDA TL_J
@@ -14669,12 +15184,61 @@ dt_clr
     LSR
     LSR
     STA screen_start_square_y_low_tiles
+    IFT BG_LOCAL_REGION_TEST=1
+        IFT BG_REGION_REVERSE_ORDER=1
+            LDA #BG_REGION_MAX_J
+        ELS
+            LDA #$FF
+        EIF
+    ELS
     LDA #$FF                    ; start one square above/left of the window (sprites can reach into it)
+    EIF
     STA TL_J
 tt_j
+    IFT BG_LOCAL_REGION_TEST=1
+        IFT BG_REGION_REVERSE_ORDER=1
+            LDA #BG_REGION_MAX_I
+        ELS
+            LDA #$FF
+        EIF
+    ELS
     LDA #$FF
+    EIF
     STA TL_I
 tt_i
+    IFT BG_SINGLE_SPRITE_TEST=1
+        LDA TL_I
+        CMP #BG_SINGLE_SPRITE_I
+        BEQ tt_single_test_x
+        JMP tt_next
+tt_single_test_x
+        LDA TL_J
+        CMP #BG_SINGLE_SPRITE_J
+        BEQ tt_single_test_cell
+        JMP tt_next
+tt_single_test_cell
+    ELS
+    IFT BG_LOCAL_REGION_TEST=1
+        LDA TL_I
+        CMP #BG_REGION_MIN_I
+        BCS tt_region_i_min_ok
+        JMP tt_next
+tt_region_i_min_ok
+        CMP #BG_REGION_MAX_I+1
+        BCC tt_region_j_check
+        JMP tt_next
+tt_region_j_check
+        LDA TL_J
+        CMP #BG_REGION_MIN_J
+        BCS tt_region_j_min_ok
+        JMP tt_next
+tt_region_j_min_ok
+        CMP #BG_REGION_MAX_J+1
+        BCC tt_region_check_done
+        JMP tt_next
+tt_region_check_done
+    EIF
+    EIF
     LDA screen_start_square_x
     CLC
     ADC TL_I
@@ -14697,16 +15261,85 @@ tt_i
         ADC #11
         AND #$3F
         STA TL_V
+        IFT BG_SINGLE_SPRITE_TEST=1
+            LDA #BG_SINGLE_SPRITE_INDEX
+            STA TL_V
+        EIF
         LDA #0
+        IFT BG_FLIP_TEST=1
+            LDA TL_I
+            AND #1
+            ASL
+            ASL
+            ASL
+            ASL
+            ASL
+            ASL
+            ASL
+            STA TL_O
+            LDA TL_J
+            AND #1
+            ASL
+            ASL
+            ASL
+            ASL
+            ASL
+            ASL
+            ORA TL_O
+        EIF
         STA square_orientation
         LDA TL_V
         STA square_sprite
         JSR setup_background_sprite_values_from_08_09
+        IFT BG_FLIP_TEST=0
+            LDA #0
+            STA this_object_x_low
+            LDX TL_V
+            LDA background_y_offset_lookup,X
+            AND #$F0
+            STA this_object_y_low
+        EIF
+        IFT BG_PALETTE_TEST=1
+            LDA #BG_PALETTE_TEST_SPRITE
+            STA this_object_sprite
+            STA this_object_sprite_old
+            LDA #0
+            STA this_object_flipping_flags
+            STA this_object_flipping_flags_old
+            STA this_object_x_low
+            STA this_object_x_low_old
+            STA this_object_y_low
+            STA this_object_y_low_old
+            LDA TL_V
+            AND #$0F
+            ORA #$B0
+            STA this_object_palette
+            STA this_object_palette_old
+            LDA #0
+            STA square_orientation
+            STA this_object_flipping_flags
+            STA this_object_flipping_flags_old
+        EIF
         LDA #0
         STA DBG_OBJFLAG
     ELS
+        ; Render with background_processing_flag = 0, so determine_background
+        ; calls no object handlers. Otherwise a stale flag from the collision code
+        ; lets handle_background_door replace a door square with a solid wall from
+        ; door_square_sprite_lookup ($17/$2A). Those wall squares are for
+        ; collisions only. The BBC strip plotter uses $00/$80, so a door square
+        ; keeps value 3 (sprite $46, a 1x1 placeholder), and only the door object
+        ; is drawn. Handlers would also spawn objects every frame.
+        LDA background_processing_flag
+        PHA
+        LDA #0
+        STA background_processing_flag
         JSR determine_background
         STA TL_V
+        PLA
+        STA background_processing_flag
+        LDA TL_V
+        JSR setup_background_sprite_values_from_08_09
     EIF
     IFT BG_RENDERER_MODE=2
         JMP tt_has_bg             ; render every test value, including $19
@@ -14776,18 +15409,63 @@ tt_has_bg
     LDX TL_X
     LDA sprite_offset_a_lookup,X
     STA TL_A
+    LDA TL_I
+    ASL
+    ASL
+    STA TL_C0
+    LDA this_object_x_low
+    SEC
+    SBC screen_start_square_x_low
+    STA TL_XD
+    BCC tt_xdelta_negative
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    JMP tt_xdelta_add
+tt_xdelta_negative
+    LDA TL_XD
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    SEC
+    SBC #4
+tt_xdelta_add
+    CLC
+    ADC TL_C0
+    STA TL_C0
+    LDA TL_XD
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_MAP_TMP
+    STA TL_DPH
+    LDA TL_A
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_T
+    LDA TL_MAP_TMP
+    SEC
+    SBC TL_T
+    AND #3
+    STA TL_PH
     LDA sprite_width_lookup,X   ; columns = ceil((px + phase) / 4), px = width>>4, phase = (a>>4)&3 (plotter)
     LSR
     LSR
     LSR
     LSR
     STA TL_W
-    LDA sprite_offset_a_lookup,X
-    LSR
-    LSR
-    LSR
-    LSR
-    AND #3
+    LDA TL_MAP_TMP
     CLC
     ADC TL_W
     CLC
@@ -14795,13 +15473,7 @@ tt_has_bg
     LSR
     LSR
     STA TL_W
-    LDA sprite_offset_a_lookup,X ; pixel phase (plotter: bits 4-5 of a)
-    LSR
-    LSR
-    LSR
-    LSR
-    AND #3
-    STA TL_PH
+    LDA TL_PH
     ASL
     STA TL_S
     LDA #8
@@ -14820,12 +15492,24 @@ tt_has_bg
     ADC #0
     AND #$1F
     STA TL_A
-    LDA TL_I                    ; dest column = i*4 - (x_low>>6)
-    ASL
-    ASL
-    SEC
-    SBC screen_start_square_x_low_tiles
-    STA TL_C0
+    LDA TL_T
+    CMP #2
+    BCC tt_source_col_ready
+    LDA TL_FL
+    BMI tt_source_col_ready
+    INC TL_A
+    LDA TL_A
+    AND #$1F
+    STA TL_A
+tt_source_col_ready
+    LDA TL_X
+    CMP #$5F
+    BNE tt_source_col_done
+    INC TL_A
+    LDA TL_A
+    AND #$1F
+    STA TL_A
+tt_source_col_done
     LDA TL_J                    ; dest first line = j*32 - (y_low>>3)
     ASL
     ASL
@@ -14835,25 +15519,97 @@ tt_has_bg
     SEC
     SBC screen_start_square_y_low_tiles
     STA TL_Y0
-    LDA DBG_OBJFLAG
-    CMP #2
-    BEQ tt_yoff_done
-    LDX TL_V
-    LDA background_y_offset_lookup,X
-    AND #$F0
+    LDX TL_X
+    LDA this_object_y_low
+    CLC
+    ADC sprite_height_lookup,X
     LSR
     LSR
     LSR
+    STA TL_MAP_TMP
+    LDA sprite_height_lookup,X
+    LSR
+    LSR
+    LSR
+    STA TL_O
+    LDA TL_MAP_TMP
+    SEC
+    SBC TL_O
     CLC
     ADC TL_Y0
     STA TL_Y0
-tt_yoff_done
 tt_draw                      ; entry for calib_test: TL_X, TL_FL, TL_A/B/W/H, TL_C0/Y0 set
+    LDX TL_X
+    LDA this_object_palette
+    AND #$0F
+    TAY
+    LDA palette_value_to_pixel_lookup,Y
+    AND #$01
+    STA TL_PC+1
+    LDA palette_value_to_pixel_lookup,Y
+    LSR
+    AND #$02
+    ORA TL_PC+1
+    STA TL_PC+1
+    LDA palette_value_to_pixel_lookup,Y
+    LSR
+    AND #$01
+    STA TL_PC+2
+    LDA palette_value_to_pixel_lookup,Y
+    LSR
+    LSR
+    AND #$02
+    ORA TL_PC+2
+    STA TL_PC+2
+    LDA this_object_palette
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #$03
+    STA TL_PC+3
+    LDA #0
+    STA TL_PC
+; No colour swap here. The plotter's $01/$02, $10/$20, $11/$22 exchange
+; (odd screen X, odd-width X-flip, sprite_offset_a bit 4) only moves a pixel
+; between the left and right halves of a Mode 2 byte; the colour index of each
+; source pixel is unchanged. Pixel phase is handled by TL_PH/TL_DPH instead.
+    IFT BG_PALETTE_SWAP_INVERT_TEST=1
+        LDA TL_PC+1
+        LDY TL_PC+2
+        STY TL_PC+1
+        STA TL_PC+2
+    EIF
+    IFT BG_SILHOUETTE_TEST=1
+        LDA #1
+        STA TL_PC+1
+        STA TL_PC+2
+        STA TL_PC+3
+    EIF
+    LDX #0
+tt_palette_map
+    TXA
+    LSR
+    LSR
+    TAY
+    LDA TL_PC,Y
+    ASL
+    ASL
+    STA TL_MAP_TMP
+    TXA
+    AND #$03
+    TAY
+    LDA TL_PC,Y
+    ORA TL_MAP_TMP
+    STA TL_MAP,X
+    INX
+    CPX #16
+    BNE tt_palette_map
     INC TL_H                    ; sprite height is encoded as height - 1
     LDX TL_X
     LDA #0
     BIT TL_FL
-    BVC tt_source_start         ; TEST: inverted V-flag mapping
+    BVC tt_source_start
     LDA sprite_height_lookup,X
     AND #$F8
 tt_source_start
@@ -14902,6 +15658,25 @@ tt_source_start
     SBC TL_S
     STA TL_T8
 tt_phase_ready
+    LDX TL_X
+    LDA sprite_width_lookup,X
+    LSR
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TL_DPH
+    STA TL_MAP_TMP
+    CLC
+    ADC #4
+    LSR
+    LSR
+    STA TL_W
+    LDA TL_MAP_TMP
+    AND #3
+    CLC
+    ADC #1
+    STA TL_TAIL
     LDA #0
     STA TL_K
 tt_k
@@ -14992,8 +15767,6 @@ tt_nofx
     LDX TL_PH
     BEQ tt_nophase
     STA TL_O                    ; current byte
-    LDA TL_K                    ; first destination column has no adjacent sprite byte
-    BEQ tt_zprev
     LDA (TL_Q),Y                ; previous column, same line
     BIT TL_FL
     BPL tt_phase_neighbor_ready
@@ -15001,11 +15774,6 @@ tt_nofx
     LDA pix_rev,X
 tt_phase_neighbor_ready
     STA TL_N
-    JMP tt_prevdone
-tt_zprev
-    LDA #0
-    STA TL_N
-tt_prevdone
     LDA TL_O
     LDX TL_S
     BEQ tt_shr_done
@@ -15023,6 +15791,43 @@ tt_shl
     BNE tt_shl
     ORA TL_O
 tt_nophase
+    STA TL_O
+    AND #$0F
+    TAX
+    LDA TL_MAP,X
+    STA TL_N
+    LDA TL_O
+    LSR
+    LSR
+    LSR
+    LSR
+    TAX
+    LDA TL_MAP,X
+    ASL
+    ASL
+    ASL
+    ASL
+    ORA TL_N
+    STA TL_T
+    LDA TL_O
+    LSR
+    ORA TL_O
+    AND #$55
+    STA TL_N
+    ASL
+    ORA TL_N
+    STA TL_N
+    LDA TL_K
+    CLC
+    ADC #1
+    CMP TL_W
+    BNE tt_tail_done
+    LDY TL_TAIL
+    LDA tt_tail_mask,Y
+    AND TL_N
+    STA TL_N
+tt_tail_done
+    LDA TL_T
     PHA
     LDA TL_Y0                   ; dest line = Y0 + L (must be 0..191)
     CLC
@@ -15037,14 +15842,8 @@ tt_lok
     JSR glyph_addr             ; SPR_DST already includes the line within the cell (Y&7)
     LDY #0
     PLA
-    STA TL_T                    ; pixel value 0 is transparent: keep what is already drawn
-    LSR
-    ORA TL_T
-    AND #$55                    ; nonzero pixels, low bit of each pair
-    STA TL_N
-    ASL
-    ORA TL_N                    ; mask of nonzero pixels (both bits of each pair)
-    STA TL_N
+    STA TL_T
+    LDA TL_N
     EOR #$FF
     AND (SPR_DST),Y             ; old pixels where the sprite pixel is 0
     STA TL_O
@@ -15069,11 +15868,36 @@ tt_kret
     RTS
 
 tt_next
+    IFT BG_LOCAL_REGION_TEST=1
+        IFT BG_REGION_REVERSE_ORDER=1
+            DEC TL_I
+            LDA TL_I
+            CMP #(BG_REGION_MIN_I-1)
+            BNE tt_region_reverse_same_row
+            DEC TL_J
+            LDA TL_J
+            CMP #(BG_REGION_MIN_J-1)
+            BNE tt_region_reverse_next_row
+            JMP tt_done
+tt_region_reverse_next_row
+            LDA #BG_REGION_MAX_I
+            STA TL_I
+tt_region_reverse_same_row
+            JMP tt_i
+        ELS
+            INC TL_I
+            LDA TL_I
+            CMP #9
+            BEQ tt_row
+            JMP tt_i
+        EIF
+    ELS
     INC TL_I
     LDA TL_I
     CMP #9
     BEQ tt_row
     JMP tt_i
+    EIF
 tt_row
     INC TL_J
     LDA TL_J
@@ -15135,11 +15959,21 @@ cal_sloop
     LSR
     LSR
     STA TL_W
+    LDA TL_XD
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_MAP_TMP
     LDA sprite_offset_a_lookup,X ; pixel phase (plotter: bits 4-5 of a)
     LSR
     LSR
     LSR
     LSR
+    AND #3
+    CLC
+    ADC TL_MAP_TMP
     AND #3
     STA TL_PH
     ASL
@@ -15303,15 +16137,49 @@ vc_col
     STA SPR_L
 vc_line
     LDY SPR_L
-    LDA (SPR_P),Y               ; BBC cell A, byte of this line
+    IFT BG_RAW_BBC_MASK_TEST=1
+    LDA #0
+    STA SPR_T
+    LDA (SPR_P),Y
+    AND #$AA
+    BEQ vc_mask_a_p0
+    LDA SPR_T
+    ORA #$40
+    STA SPR_T
+vc_mask_a_p0
+    LDA (SPR_P),Y
+    AND #$55
+    BEQ vc_mask_a_p1
+    LDA SPR_T
+    ORA #$10
+    STA SPR_T
+vc_mask_a_p1
+    LDA (SPR_TR),Y
+    AND #$AA
+    BEQ vc_mask_b_p0
+    LDA SPR_T
+    ORA #$04
+    STA SPR_T
+vc_mask_b_p0
+    LDA (SPR_TR),Y
+    AND #$55
+    BEQ vc_mask_b_p1
+    LDA SPR_T
+    ORA #$01
+    STA SPR_T
+vc_mask_b_p1
+    LDA SPR_T
+    ELS
+    LDA (SPR_P),Y           ; BBC cell A, byte of this line
     TAX
     LDA pix_hi,X
     STA SPR_T
     LDY SPR_L
-    LDA (SPR_TR),Y              ; BBC cell B, byte of this line
+    LDA (SPR_TR),Y          ; BBC cell B, byte of this line
     TAX
     LDA pix_lo,X
     ORA SPR_T
+    EIF
     LDY SPR_L
     STA (SPR_DST),Y
     INC SPR_L

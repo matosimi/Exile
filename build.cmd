@@ -1,1 +1,1 @@
-mads Exile.asm -o:Exile.xex -l -t
+mads Exile.asm -d:BG_RENDERER_MODE=0 -o:Exile.xex -l -t
