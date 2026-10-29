@@ -155,7 +155,45 @@ Important corrections made during this session:
 
 - Clears charsets each frame (`clear_charsets` in `main_loop`), then calls
   `bg_tiles_test`.
-- Startup does not call `bg_save`: its 6 KB `$A800-$BFFF` buffer overlaps the
+- Native game mode 1 now records each active object from `plot_object` while
+  `process_objects` runs, clears the per-slot Y-valid markers at the start of
+  each frame, and draws those objects over the native background. This avoids
+  retaining sprites from object slots that became empty.
+- Foreground and background sprites share the native `tt_draw` pixel writer,
+  atlas addressing, source-pixel transparency, and palette mapping. Their
+  position/orientation setup is separate: foreground positions come from the
+  live object coordinates, while background placement comes from square
+  coordinates and per-square offsets. Native mode does not call the BBC
+  `plot_sprite` routine for its foreground pass.
+- The native foreground pass now preserves mode 0's observed priority: an
+  opaque sprite pixel is written only where the destination pixel is `$00`.
+  This prevents foreground objects behind already-rendered background pixels
+  from appearing on top.
+- Native foreground sprites currently use full atlas geometry. Teleport resize
+  and vertical-placement behavior is not yet mirrored; capturing the plotter's
+  post-resize values also included incremental-redraw deltas and caused visual
+  corruption. The renderer keeps each object's palette in scratch memory rather
+  than mutating the live game palette. Native particles are drawn from the
+  evolved particle stack between the background and foreground passes; their
+  Mode 2 pixel patterns are converted with `pix_hi`/`pix_lo` and XORed into the
+  native framebuffer.
+- Native mode 1 defaults `BG_DISABLE_MODE0_RENDERING` to `1`. This skips the
+  BBC plotter's pixel-writing pass and the reference VRAM edge-clear loops
+  during scrolling. Cached background-strip calls, sprite-bound/update
+  calculations, and scrolling/background-object bookkeeping remain enabled for
+  game logic. Set
+  `-d:BG_DISABLE_MODE0_RENDERING=0` for diagnostic builds that also run the
+  reference draw work.
+  `BG_SKIP_REFERENCE_PLOTTER_DRAW` remains a compatibility default for the new
+  switch.
+- Joystick 1 directions, trigger, and START are sampled by `gamevbi` and mapped
+  to the game's existing Q/W/P/L, Space, and Copy controls. `read_input` lives
+  at `$BB00`, in the gap before `flag_table` at `$BC00`; `$80A0` is occupied by
+  `m4_dli` and must not be used for the input routine.
+- Foreground X placement must branch on the low-byte coordinate comparison
+  before using that result to adjust the scaled high-byte delta; later shifts
+  overwrite the processor carry flag.
+- Startup does not call `bg_save`: its 6 KB `$9E00-$B5FF` buffer overlaps the
   converted sprite sheet at `$B000`. The old background-copy sprite test has no
   active move/erase callers; the native renderer clears and redraws charsets.
 - Per square: lookup sprite, `a`/`b`/width/height, column count (section 4),
@@ -214,12 +252,23 @@ in the converter output, not made of squares. Ignored in the comparison.
 
 - Build the stable BBC-reference default with `build.cmd` (MADS, in the project
   folder). Native mode 1 remains available as an experimental game map.
+- Build the optimized native mode 1 variant with
+  `mads Exile.asm -d:BG_RENDERER_MODE=1 -d:BG_DISABLE_MODE0_RENDERING=1 -o:Exile-mode1.xex`.
+- Build the isolated coarse LMS-scroll prototype with
+  `mads Exile.asm -d:BG_RENDERER_MODE=2 -d:BG_LMS_SCROLL_TEST=1 -o:Exile-lms-scroll-test.xex`.
+  It uses a 64-character-code row, an LMS address on each of the 24 Mode 4
+  rows, and advances the 32-character viewport one cell every four frames.
+  The map repeats every 32 cells; this prototype tests coarse horizontal
+  display-list scrolling only, not HSCROL, VSCROL, or game-world rendering.
 - `BG_RENDERER_MODE=0` selects the BBC-VRAM game reference (default), `1`
   selects the native game map, `2` selects the native synthetic map, and `3`
   selects the same synthetic map through the BBC plotter and converter. Mode 3
   brackets the pass with `change_display_mode`, matching the normal background
   strip's overwrite behavior; `plot_sprite` applies
   `palette_value_to_pixel_lookup` during that pass.
+- Mode 1 disables mode 0 plotter drawing by default. To enable the BBC
+  reference draw work in a diagnostic build, use
+  `-d:BG_RENDERER_MODE=1 -d:BG_DISABLE_MODE0_RENDERING=0`.
 - Ready-to-capture paired test builds: `Exile-reference-maptest.xex` (mode 3)
   and `Exile-maptest.xex` (mode 2). Capture both from the same start state,
   then combine with

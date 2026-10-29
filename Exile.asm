@@ -1850,7 +1850,7 @@ secondary_stack_free_slot_found
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 .proc plot_object
-    IFT BG_NATIVE_FOREGROUND_TEST=1
+    IFT BG_RENDERER_MODE=1
     LDX current_object
     LDA this_object_x
     STA tt_fg_x,X
@@ -2268,6 +2268,11 @@ L0EB6
     LDA #$0A
     STA skip_sprite_calculation_flags
 object_needs_redrawing_in
+    IFT BG_RENDERER_MODE=1
+        IFT BG_DISABLE_MODE0_RENDERING=1
+            RTS
+        EIF
+    EIF
     LDA #$02
     STA plotter_x
     LDA #$00
@@ -3208,6 +3213,7 @@ pause_key_index=0
 left_key_index=15
 f8_key_index=9
 num_keys=39
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -4551,7 +4557,26 @@ collided_in_last_cycle
 player_teleporting_flag
     dta $00
 .IFNDEF BG_RENDERER_MODE
-BG_RENDERER_MODE=1            ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
+BG_LMS_SCROLL_TEST=1
+BG_RENDERER_MODE=2           ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
+.ENDIF
+.IFNDEF BG_LMS_SCROLL_TEST
+BG_LMS_SCROLL_TEST=0
+.ENDIF
+    IFT BG_LMS_SCROLL_TEST=1
+    IFT BG_RENDERER_MODE<>2
+        ERT "BG_LMS_SCROLL_TEST requires BG_RENDERER_MODE=2"
+    EIF
+    EIF
+.IFNDEF BG_SKIP_REFERENCE_PLOTTER_DRAW
+    IFT BG_RENDERER_MODE=1
+BG_SKIP_REFERENCE_PLOTTER_DRAW=1
+    ELS
+BG_SKIP_REFERENCE_PLOTTER_DRAW=0
+    EIF
+.ENDIF
+.IFNDEF BG_DISABLE_MODE0_RENDERING
+BG_DISABLE_MODE0_RENDERING=BG_SKIP_REFERENCE_PLOTTER_DRAW
 .ENDIF
 .IFNDEF BG_FLIP_TEST
 BG_FLIP_TEST=0
@@ -4604,9 +4629,6 @@ BG_RAW_BBC_MASK_TEST=0
 .IFNDEF BG_STOP_AFTER_RENDER_TEST
 BG_STOP_AFTER_RENDER_TEST=0
 .ENDIF
-.IFNDEF BG_NATIVE_FOREGROUND_TEST
-BG_NATIVE_FOREGROUND_TEST=0
-.ENDIF
 .IFNDEF BG_NATIVE_FOREGROUND_SLOT_TEST
 BG_NATIVE_FOREGROUND_SLOT_TEST=255
 .ENDIF
@@ -4617,6 +4639,11 @@ BG_PALETTE_SWAP_INVERT_TEST=0
 BG_PALETTE_TEST_SPRITE=5
 .ENDIF
 main_loop
+    IFT BG_LMS_SCROLL_TEST=1
+        JSR lms_scroll_test_init
+lms_scroll_test_idle
+        JMP lms_scroll_test_idle
+    EIF
     LSR whistle1_played         ; reset whistle1
     INC loop_counter            ; increment loop counter
     LDA loop_counter
@@ -4632,6 +4659,9 @@ L19C4
     DEX
     BPL L19C0 ; loop_counter_every_loop
     JSR process_screen_background_flash
+    IFT BG_RENDERER_MODE=1
+        JSR tt_clear_foreground_objects
+    EIF
     JSR process_objects
     JSR process_events
     LDX #$02
@@ -4655,9 +4685,8 @@ L19E7
         JSR vram_convert        ; BBC VRAM reference renderer
     ELI BG_RENDERER_MODE=1
         JSR bg_tiles_test       ; native game map
-        IFT BG_NATIVE_FOREGROUND_TEST=1
-            JSR tt_draw_foreground_objects
-        EIF
+        JSR tt_draw_particles
+        JSR tt_draw_foreground_objects
     ELS
         JSR vram_convert        ; BBC VRAM game reference
     EIF
@@ -9021,6 +9050,11 @@ L36B7
     ADC #screen_base_page ; calculate the screen address for the edge
     SEC
     DEC scroll_width
+    IFT BG_RENDERER_MODE=1
+        IFT BG_DISABLE_MODE0_RENDERING=1
+            JMP skip_reference_x_edge_clear
+        EIF
+    EIF
     BIT scroll_square_x_velocity_high
     BMI L36D4
     BPL L36D6
@@ -9039,6 +9073,7 @@ L36D6
     STA screen_address+1
     DEX
     BNE L36C9 ; repeat until we've cleared the edge
+skip_reference_x_edge_clear
 	IFT SRAM
 	    ldy #$08
 	ELS
@@ -9078,6 +9113,11 @@ L3702
     LDA scroll_y_direction
     JSR make_positive
     STA scroll_height           ; get the height of the scrolled area
+    IFT BG_RENDERER_MODE=1
+        IFT BG_DISABLE_MODE0_RENDERING=1
+            JMP skip_reference_y_edge_clear
+        EIF
+    EIF
 L3719
     LDA screen_address_two_h
     STA screen_address+1
@@ -9115,6 +9155,7 @@ L3746
     STA screen_address_two_h
     DEC scroll_height
     BNE L3719
+skip_reference_y_edge_clear
     LDA #$95 ; when redrawing strip, increase $95 square_x
     LDY #$08 ; strip length = 8 squares
     LDX #$00
@@ -14170,9 +14211,36 @@ m4_frame
 m4_dl
     dta $70                     ; 8 blank scan lines
 	dta $70
+    IFT BG_LMS_SCROLL_TEST=1
+    dta $44,a(lms_scroll_map+0*64)
+    dta $44,a(lms_scroll_map+1*64)
+    dta $44,a(lms_scroll_map+2*64)
+    dta $C4,a(lms_scroll_map+3*64)
+    dta $44,a(lms_scroll_map+4*64)
+    dta $44,a(lms_scroll_map+5*64)
+    dta $44,a(lms_scroll_map+6*64)
+    dta $C4,a(lms_scroll_map+7*64)
+    dta $44,a(lms_scroll_map+8*64)
+    dta $44,a(lms_scroll_map+9*64)
+    dta $44,a(lms_scroll_map+10*64)
+    dta $C4,a(lms_scroll_map+11*64)
+    dta $44,a(lms_scroll_map+12*64)
+    dta $44,a(lms_scroll_map+13*64)
+    dta $44,a(lms_scroll_map+14*64)
+    dta $C4,a(lms_scroll_map+15*64)
+    dta $44,a(lms_scroll_map+16*64)
+    dta $44,a(lms_scroll_map+17*64)
+    dta $44,a(lms_scroll_map+18*64)
+    dta $C4,a(lms_scroll_map+19*64)
+    dta $44,a(lms_scroll_map+20*64)
+    dta $44,a(lms_scroll_map+21*64)
+    dta $44,a(lms_scroll_map+22*64)
+    dta $C4,a(lms_scroll_map+23*64)
+    ELS
     dta $44,a(m4_screen)        ; row 0: LMS + mode 4
     dta $04,$04,$84             ; rows 1-3, DLI on row 3
     :5 dta $04,$04,$04,$84      ; rows 4-23, DLI on rows 7,11,15,19,23
+    EIF
     dta $70                     ; 8 blank scan lines
     dta $41,a(m4_dl)            ; JVB back to the start
 
@@ -14193,6 +14261,151 @@ m4_dl
 	;org $9C00                   ; screen map: cell = (row&3)*32 + col
 m4_screen
 	:768 dta [[[#>>5]&3]*32]+[#&31]
+
+    IFT BG_LMS_SCROLL_TEST=1
+lms_scroll_map
+    :1536 dta [[[#>>6]&3]*32]+[#&31]
+
+lms_scroll_font_patterns
+    :128 dta [[#&3]*$55]
+    :128 dta [[[#>>2]&3]*$55]
+    :128 dta [[[#>>4]&3]*$55]
+    :128 dta [[[#>>6]&3]*$55]
+
+LMS_SCROLL_SRC=$A4
+LMS_SCROLL_DST=$A6
+lms_scroll_x
+    dta 0
+lms_scroll_tick
+    dta 0
+lms_scroll_ready
+    dta 0
+lms_scroll_font_banks
+    dta 0
+lms_scroll_font_char
+    dta 0
+
+lms_scroll_test_init
+    LDA #0
+    STA $D400                   ; hide display while preparing the test font
+    LDA #$00
+    STA $D01A                   ; COLBK
+    LDA #$36
+    STA $D016                   ; COLPF0
+    LDA #$7A
+    STA $D017                   ; COLPF1
+    LDA #$0F
+    STA $D018                   ; COLPF2
+    LDA #<vramfont
+    STA LMS_SCROLL_SRC
+    LDA #>vramfont
+    STA LMS_SCROLL_SRC+1
+    LDA #6
+    STA lms_scroll_font_banks
+lms_scroll_font_bank
+    LDX #0
+    STX lms_scroll_font_char
+lms_scroll_font_char_loop
+    LDX lms_scroll_font_char
+    LDY #0
+    LDA lms_scroll_font_patterns,X
+    STA (LMS_SCROLL_SRC),Y
+    INY
+    STA (LMS_SCROLL_SRC),Y
+    INY
+    LDA lms_scroll_font_patterns+128,X
+    STA (LMS_SCROLL_SRC),Y
+    INY
+    STA (LMS_SCROLL_SRC),Y
+    INY
+    LDA lms_scroll_font_patterns+256,X
+    STA (LMS_SCROLL_SRC),Y
+    INY
+    STA (LMS_SCROLL_SRC),Y
+    INY
+    LDA lms_scroll_font_patterns+384,X
+    STA (LMS_SCROLL_SRC),Y
+    INY
+    STA (LMS_SCROLL_SRC),Y
+    CLC
+    LDA LMS_SCROLL_SRC
+    ADC #8
+    STA LMS_SCROLL_SRC
+    BCC lms_scroll_font_ptr_ready
+    INC LMS_SCROLL_SRC+1
+lms_scroll_font_ptr_ready
+    INC lms_scroll_font_char
+    LDA lms_scroll_font_char
+    CMP #128
+    BNE lms_scroll_font_char_loop
+    DEC lms_scroll_font_banks
+    BNE lms_scroll_font_bank
+    LDA #0
+    STA lms_scroll_x
+    STA lms_scroll_tick
+    JSR lms_scroll_patch_lms
+    LDA #1
+    STA lms_scroll_ready
+    LDA #>vramfont
+    STA $D409                   ; CHBASE, band 0
+    LDA #$3D
+    STA $D400                   ; restore the game display DMA settings
+    RTS
+
+lms_scroll_test_vbi
+    INC lms_scroll_tick
+    LDA lms_scroll_tick
+    AND #3
+    BNE lms_scroll_vbi_done
+    INC lms_scroll_x
+    LDA lms_scroll_x
+    CMP #33                     ; keep the viewport within each 64-byte row
+    BCC lms_scroll_vbi_patch
+    LDA #0                      ; the map repeats every 32 characters
+    STA lms_scroll_x
+lms_scroll_vbi_patch
+    JSR lms_scroll_patch_lms
+lms_scroll_vbi_done
+    RTS
+
+lms_scroll_patch_lms
+    LDA #<lms_scroll_map
+    CLC
+    ADC lms_scroll_x
+    STA LMS_SCROLL_SRC
+    LDA #>lms_scroll_map
+    ADC #0
+    STA LMS_SCROLL_SRC+1
+    LDA #<(m4_dl+3)
+    STA LMS_SCROLL_DST
+    LDA #>(m4_dl+3)
+    STA LMS_SCROLL_DST+1
+    LDX #24
+lms_scroll_patch_row
+    LDY #0
+    LDA LMS_SCROLL_SRC
+    STA (LMS_SCROLL_DST),Y
+    INY
+    LDA LMS_SCROLL_SRC+1
+    STA (LMS_SCROLL_DST),Y
+    LDA LMS_SCROLL_SRC
+    CLC
+    ADC #$40                    ; 64 character codes per virtual row
+    STA LMS_SCROLL_SRC
+    BCC lms_scroll_source_no_carry
+    INC LMS_SCROLL_SRC+1
+lms_scroll_source_no_carry
+    LDA LMS_SCROLL_DST
+    CLC
+    ADC #3
+    STA LMS_SCROLL_DST
+    BCC lms_scroll_patch_no_carry
+    INC LMS_SCROLL_DST+1
+lms_scroll_patch_no_carry
+    DEX
+    BNE lms_scroll_patch_row
+    RTS
+    EIF
 
 ;; ---------------------------------------------------------------------------
 ;; Sprite blitter, v5: moving sprite, full redraw per move.
@@ -14385,9 +14598,19 @@ bl_done
 
 ; X = sprite column (0..255), SPR_L = line. A = sprite byte, 0 if outside.
 
+tt_clear_foreground_objects
+    LDA #0
+    LDX #15
+tt_clear_foreground_objects_loop
+    STA tt_fg_y,X
+    DEX
+    BPL tt_clear_foreground_objects_loop
+    RTS
+
 tt_draw_foreground_objects
     LDA #1
     STA TL_CAL
+    STA TL_PRIO
     LDA #0
     STA TL_I
 tt_foreground_loop
@@ -14412,9 +14635,7 @@ tt_foreground_visible
     STA TL_X
     TAY
     LDA tt_fg_palette,X
-    STA this_object_palette
-    LDA tt_fg_x_low,X
-    STA this_object_x_low
+    STA TL_PAL
     SEC
     SBC screen_start_square_x_low
     STA TL_XD
@@ -14424,8 +14645,11 @@ tt_foreground_visible
     ASL
     ASL
     STA TL_C0
-    LDA TL_XD
+    ; The high-coordinate shifts replace carry, so test the low-byte borrow directly.
+    LDA tt_fg_x_low,X
+    CMP screen_start_square_x_low
     BCC tt_foreground_x_negative
+    LDA TL_XD
     LSR
     LSR
     LSR
@@ -14434,6 +14658,7 @@ tt_foreground_visible
     LSR
     JMP tt_foreground_x_add
 tt_foreground_x_negative
+    LDA TL_XD
     LSR
     LSR
     LSR
@@ -14473,7 +14698,8 @@ tt_foreground_x_add
     SEC
     SBC TL_S
     STA TL_T8
-    LDA sprite_width_lookup,Y
+    LDX TL_X
+    LDA sprite_width_lookup,X
     LSR
     LSR
     LSR
@@ -14521,6 +14747,7 @@ tt_foreground_source_column_done
     AND #$F8
 tt_foreground_source_start
     CLC
+    LDX TL_X
     ADC sprite_offset_b_lookup,X
     ADC #0
     ASL
@@ -14541,6 +14768,7 @@ tt_foreground_source_start
     LSR
     ORA TL_B
     STA TL_B
+    LDX TL_X
     LDA sprite_height_lookup,X
     LSR
     LSR
@@ -14562,11 +14790,13 @@ tt_foreground_source_start
     LDY TL_I
     LDA tt_fg_y_low,Y
     CLC
+    LDX TL_X
     ADC sprite_height_lookup,X
     LSR
     LSR
     LSR
     STA TL_MAP_TMP
+    LDX TL_X
     LDA sprite_height_lookup,X
     LSR
     LSR
@@ -14588,6 +14818,114 @@ tt_foreground_next
 tt_foreground_done
     LDA #0
     STA TL_CAL
+    STA TL_PRIO
+    RTS
+
+tt_draw_particles
+    LDA number_of_particles
+    BPL tt_particles_have_particles
+    JMP tt_particles_done
+tt_particles_have_particles
+    LDX number_of_particles_x8
+tt_particle_loop
+    STX TL_I
+    LDA particle_stack_x_low,X
+    SEC
+    SBC screen_start_square_x_low
+    STA TL_MAP_TMP
+    LDA particle_stack_x,X
+    SBC screen_start_square_x
+    ASL
+    ASL
+    STA TL_C0
+    LDA TL_MAP_TMP
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TL_C0
+    CMP #32
+    BCC tt_particle_x_visible
+    JMP tt_particle_next
+tt_particle_x_visible
+    STA SPR_COL
+    LDA TL_MAP_TMP
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA TL_PH
+
+    LDX TL_I
+    LDA particle_stack_y_low,X
+    SEC
+    SBC screen_start_square_y_low
+    STA TL_MAP_TMP
+    LDA particle_stack_y,X
+    SBC screen_start_square_y
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    STA TL_Y0
+    LDA TL_MAP_TMP
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TL_Y0
+    CMP #192
+    BCC tt_particle_y_visible
+    JMP tt_particle_next
+tt_particle_y_visible
+    STA SPR_Y
+
+    LDX TL_I
+    LDA particle_stack_type,X
+    AND #7
+    TAX
+    LDY TL_PH
+    TYA
+    AND #1
+    BNE tt_particle_mask_right
+    LDA pixel_table,X
+    AND #$AA
+    JMP tt_particle_convert_pixel
+tt_particle_mask_right
+    LDA pixel_table,X
+    AND #$55
+tt_particle_convert_pixel
+    TAX
+    LDY TL_PH
+    CPY #2
+    BCS tt_particle_convert_low
+    LDA pix_hi,X
+    JMP tt_particle_colour_ready
+tt_particle_convert_low
+    LDA pix_lo,X
+tt_particle_colour_ready
+    STA TL_T
+    LDA TL_T
+    BEQ tt_particle_next
+    JSR glyph_addr
+    LDY #0
+    LDA (SPR_DST),Y
+    EOR TL_T
+    STA (SPR_DST),Y
+tt_particle_next
+    LDX TL_I
+    BEQ tt_particles_done
+    TXA
+    SEC
+    SBC #8
+    TAX
+    JMP tt_particle_loop
+tt_particles_done
     RTS
 
 tt_fg_x
@@ -14859,6 +15197,7 @@ TL_FL=$BF21                    ; square_orientation: bit7 = flip X, bit6 = flip 
 TL_SK=$BF22                    ; source column (after flip)
 TL_SL=$BF23                    ; source line within sprite (after flip)
 TL_CAL=$BF24                   ; 1 while calib_test drives tt_draw
+TL_PRIO=$BF46                  ; foreground pixels only draw over background pixels
 TL_T=$BF27                     ; temporaries for the transparent write
 TL_N=$BF28
 TL_O=$BF29
@@ -14868,6 +15207,7 @@ TL_TAIL=$BF2E                  ; valid pixels in the final destination byte
 TL_PC=$BF40
 TL_MAP_TMP=$BF44
 TL_XD=$BF45
+TL_PAL=$BF47
 TL_S=$BF2C                     ; 2*phase: bits shifted right
 TL_T8=$BF2D                    ; 8-2*phase: bits brought in from the previous column
 TL_Q=$E0                       ; 2 bytes, zero page: pointer to the previous column (phase shift)
@@ -15156,6 +15496,8 @@ btr_done
     RTS
 
 bg_tiles_test
+    LDA #0
+    STA TL_PRIO
     LDX #69                     ; DEBUG: clear the square table ($FF = empty or skipped)
     LDA #$FF
 dt_clr
@@ -15472,6 +15814,7 @@ tt_xdelta_add
     SEC
     SBC TL_S
     STA TL_T8
+    LDX TL_X
     LDA sprite_height_lookup,X
     LSR
     LSR
@@ -15521,8 +15864,13 @@ tt_source_col_done
     ADC TL_Y0
     STA TL_Y0
 tt_draw                      ; entry for calib_test: TL_X, TL_FL, TL_A/B/W/H, TL_C0/Y0 set
-    LDX TL_X
+    LDA TL_PRIO
+    BNE tt_palette_ready
     LDA this_object_palette
+    STA TL_PAL
+tt_palette_ready
+    LDX TL_X
+    LDA TL_PAL
     AND #$0F
     TAY
     LDA palette_value_to_pixel_lookup,Y
@@ -15543,7 +15891,7 @@ tt_draw                      ; entry for calib_test: TL_X, TL_FL, TL_A/B/W/H, TL
     AND #$02
     ORA TL_PC+2
     STA TL_PC+2
-    LDA this_object_palette
+    LDA TL_PAL
     LSR
     LSR
     LSR
@@ -15592,11 +15940,15 @@ tt_palette_map
     LDA #0
     BIT TL_FL
     BVC tt_source_start
+    LDX TL_X
     LDA sprite_height_lookup,X
     AND #$F8
 tt_source_start
+    STA TL_O
+    LDX TL_X
+    LDA sprite_offset_b_lookup,X
     CLC
-    ADC sprite_offset_b_lookup,X
+    ADC TL_O
     ADC #$00                    ; preserve carry from packed b + height
     ASL
     ADC #$00                    ; rotate left through carry twice, as plotter
@@ -15861,6 +16213,19 @@ tt_lok
     LDY #0
     PLA
     STA TL_T
+    LDA TL_PRIO
+    BEQ tt_merge_sprite
+    LDA (SPR_DST),Y
+    LSR
+    ORA (SPR_DST),Y
+    AND #$55
+    STA TL_O
+    ASL
+    ORA TL_O
+    EOR #$FF
+    AND TL_N
+    STA TL_N
+tt_merge_sprite
     LDA TL_N
     EOR #$FF
     AND (SPR_DST),Y             ; old pixels where the sprite pixel is 0
@@ -16267,24 +16632,17 @@ cell_ptr
 bg_copy                         ; background copy of the 6 charsets, 6 KB, not in the file
 	.ds 6*1024
 
-	org $BB00                   ; joystick input, outside the program image
-;; ---------------------------------------------------------------------------
-;; Input: joystick 1 and START, mapped as on the C64 (thrust by pushing the stick,
-;; fire by the trigger). Replaces the BBC keyboard matrix scan in irq_routine.
-;; keys_pressed[i] is an 8-bit history: bit 7 = pressed now, bit 6 = last frame.
-;; Each frame: new = (old >> 1) | (pressed ? $80 : 0).
-;; Key indices (keys_to_check order): 0 pause, 13 fire (Space), 33 Q left,
-;; 34 W right, 35 and 36 P up (both P entries are scanned by the BBC), 37 L down.
-;; Stick PIA port A ($d300) bits 0-3 = up, down, left, right, active low.
-;; Trigger TRIG0 ($d010) active low. CONSOL ($d01f) bit 0 = START, active low.
+	org $BB00                   ; unused gap before flag_table; $80A0 is m4_dli
+;; Joystick 1 and START, mapped onto the game's existing keyboard controls.
+;; Directions / trigger are active-low and sampled from PIA / GTIA by gamevbi.
 read_input
     LDA $D300
-    EOR #$0F                    ; active low -> pressed = 1
+    EOR #$0F
     STA input_bits
     LSR input_bits              ; carry = up
     LDX #35
     JSR key_carry
-    LDX #36                     ; second P entry: same state (input_tmp still holds it)
+    LDX #36                     ; second P entry uses the same up state
     JSR key_set
     LSR input_bits              ; carry = down
     LDX #37
@@ -16326,7 +16684,6 @@ input_bits
     dta 0
 input_tmp
     dta 0
-
 
 ;; Test sprite (sprites_convert.py output), outside the program image: used by the sprite blitter only.
 	org $C000                   ; original BBC sprite sheet (raw, no header), read by the game's plotter
@@ -16384,5 +16741,11 @@ gamevbi	phr
 	jsr read_input              ; joystick/console -> keys_pressed (replaces the BBC keyboard scan)
 	mva #1 m4_dli_index
 	mva m4_charset_pages chbase
+    IFT BG_LMS_SCROLL_TEST=1
+        LDA lms_scroll_ready
+        BEQ lms_scroll_vbi_skip
+        JSR lms_scroll_test_vbi
+lms_scroll_vbi_skip
+    EIF
 	plr
 	rti
