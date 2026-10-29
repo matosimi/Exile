@@ -260,6 +260,28 @@ in the converter output, not made of squares. Ignored in the comparison.
   rows, and advances the 32-character viewport one cell every four frames.
   The map repeats every 32 cells; this prototype tests coarse horizontal
   display-list scrolling only, not HSCROL, VSCROL, or game-world rendering.
+- Build the fine horizontal-scroll variant with
+  `mads Exile.asm -d:BG_RENDERER_MODE=2 -d:BG_LMS_SCROLL_TEST=1 -d:BG_LMS_FINE_SCROLL_TEST=1 -o:Exile-lms-fine-scroll-test.xex`.
+  This enables HSCROL on each Mode 4 row and counts it down from 15 to 0 so
+  fine motion matches the direction of the coarse LMS movement. On wrap, each
+  LMS pointer advances by four character codes and HSCROL resets to 15. Its
+  80-code row pitch provides enough guard cells for the 40 codes fetched by
+  ANTIC during horizontal scrolling. The fine-scroll flag requires the LMS
+  test and mode 2; VSCROL is disabled in this variant.
+- Build the isolated vertical fine-scroll variant with
+  `mads Exile.asm -d:BG_RENDERER_MODE=2 -d:BG_LMS_SCROLL_TEST=1 -d:BG_LMS_FINE_SCROLL_TEST=0 -d:BG_LMS_VSCROLL_TEST=1 -o:Exile-lms-vscroll-test.xex`.
+  This enables VSCROL on each Mode 4 row and advances it through scan lines
+  0-7. When it wraps, the LMS addresses advance by one 64-code row and VSCROL
+  resets to 0. The 32-row test map repeats every four rows and provides guard
+  rows around the 24-row viewport. This isolates vertical scrolling with
+  HSCROL disabled.
+- Build the combined horizontal and vertical fine-scroll test with
+  `mads Exile.asm -d:BG_RENDERER_MODE=2 -d:BG_LMS_SCROLL_TEST=1 -d:BG_LMS_FINE_SCROLL_TEST=1 -d:BG_LMS_VSCROLL_TEST=1 -o:Exile-lms-2dscroll-test.xex`.
+  This enables both ANTIC scroll bits. HSCROL counts down 15-0; VSCROL counts
+  up 0-7. On their respective wraps, LMS pointers advance by four character
+  codes horizontally or one 80-code row vertically. The 32-row map repeats
+  every four rows. All scroll variants remain synthetic tests, not game-world
+  rendering.
 - `BG_RENDERER_MODE=0` selects the BBC-VRAM game reference (default), `1`
   selects the native game map, `2` selects the native synthetic map, and `3`
   selects the same synthetic map through the BBC plotter and converter. Mode 3

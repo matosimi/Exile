@@ -4558,14 +4558,38 @@ player_teleporting_flag
     dta $00
 .IFNDEF BG_RENDERER_MODE
 BG_LMS_SCROLL_TEST=1
+BG_LMS_VSCROLL_TEST=1
+BG_LMS_FINE_SCROLL_TEST=1
 BG_RENDERER_MODE=2           ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
 .ENDIF
 .IFNDEF BG_LMS_SCROLL_TEST
 BG_LMS_SCROLL_TEST=0
 .ENDIF
+.IFNDEF BG_LMS_FINE_SCROLL_TEST
+BG_LMS_FINE_SCROLL_TEST=0
+.ENDIF
+.IFNDEF BG_LMS_VSCROLL_TEST
+BG_LMS_VSCROLL_TEST=0
+.ENDIF
     IFT BG_LMS_SCROLL_TEST=1
     IFT BG_RENDERER_MODE<>2
         ERT "BG_LMS_SCROLL_TEST requires BG_RENDERER_MODE=2"
+    EIF
+    EIF
+    IFT BG_LMS_FINE_SCROLL_TEST=1
+    IFT BG_RENDERER_MODE<>2
+        ERT "BG_LMS_FINE_SCROLL_TEST requires BG_RENDERER_MODE=2"
+    EIF
+    IFT BG_LMS_SCROLL_TEST<>1
+        ERT "BG_LMS_FINE_SCROLL_TEST requires BG_LMS_SCROLL_TEST=1"
+    EIF
+    EIF
+    IFT BG_LMS_VSCROLL_TEST=1
+    IFT BG_RENDERER_MODE<>2
+        ERT "BG_LMS_VSCROLL_TEST requires BG_RENDERER_MODE=2"
+    EIF
+    IFT BG_LMS_SCROLL_TEST<>1
+        ERT "BG_LMS_VSCROLL_TEST requires BG_LMS_SCROLL_TEST=1"
     EIF
     EIF
 .IFNDEF BG_SKIP_REFERENCE_PLOTTER_DRAW
@@ -14212,30 +14236,57 @@ m4_dl
     dta $70                     ; 8 blank scan lines
 	dta $70
     IFT BG_LMS_SCROLL_TEST=1
-    dta $44,a(lms_scroll_map+0*64)
-    dta $44,a(lms_scroll_map+1*64)
-    dta $44,a(lms_scroll_map+2*64)
-    dta $C4,a(lms_scroll_map+3*64)
-    dta $44,a(lms_scroll_map+4*64)
-    dta $44,a(lms_scroll_map+5*64)
-    dta $44,a(lms_scroll_map+6*64)
-    dta $C4,a(lms_scroll_map+7*64)
-    dta $44,a(lms_scroll_map+8*64)
-    dta $44,a(lms_scroll_map+9*64)
-    dta $44,a(lms_scroll_map+10*64)
-    dta $C4,a(lms_scroll_map+11*64)
-    dta $44,a(lms_scroll_map+12*64)
-    dta $44,a(lms_scroll_map+13*64)
-    dta $44,a(lms_scroll_map+14*64)
-    dta $C4,a(lms_scroll_map+15*64)
-    dta $44,a(lms_scroll_map+16*64)
-    dta $44,a(lms_scroll_map+17*64)
-    dta $44,a(lms_scroll_map+18*64)
-    dta $C4,a(lms_scroll_map+19*64)
-    dta $44,a(lms_scroll_map+20*64)
-    dta $44,a(lms_scroll_map+21*64)
-    dta $44,a(lms_scroll_map+22*64)
-    dta $C4,a(lms_scroll_map+23*64)
+        IFT BG_LMS_FINE_SCROLL_TEST=1
+            IFT BG_LMS_VSCROLL_TEST=1
+LMS_SCROLL_DL_NORMAL=$74
+LMS_SCROLL_DL_DLI=$F4
+LMS_SCROLL_ROW_STRIDE=80
+LMS_SCROLL_MAP_HEIGHT=32
+LMS_SCROLL_VERTICAL_PERIOD=4
+            ELS
+LMS_SCROLL_DL_NORMAL=$54
+LMS_SCROLL_DL_DLI=$D4
+LMS_SCROLL_ROW_STRIDE=80
+LMS_SCROLL_MAP_HEIGHT=24
+            EIF
+        ELS
+            IFT BG_LMS_VSCROLL_TEST=1
+LMS_SCROLL_DL_NORMAL=$64
+LMS_SCROLL_DL_DLI=$E4
+LMS_SCROLL_ROW_STRIDE=64
+LMS_SCROLL_MAP_HEIGHT=32
+LMS_SCROLL_VERTICAL_PERIOD=4
+            ELS
+LMS_SCROLL_DL_NORMAL=$44
+LMS_SCROLL_DL_DLI=$C4
+LMS_SCROLL_ROW_STRIDE=64
+LMS_SCROLL_MAP_HEIGHT=24
+            EIF
+        EIF
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+0*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+1*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+2*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_DLI,a(lms_scroll_map+3*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+4*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+5*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+6*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_DLI,a(lms_scroll_map+7*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+8*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+9*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+10*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_DLI,a(lms_scroll_map+11*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+12*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+13*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+14*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_DLI,a(lms_scroll_map+15*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+16*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+17*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+18*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_DLI,a(lms_scroll_map+19*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+20*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+21*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_NORMAL,a(lms_scroll_map+22*LMS_SCROLL_ROW_STRIDE)
+    dta LMS_SCROLL_DL_DLI,a(lms_scroll_map+23*LMS_SCROLL_ROW_STRIDE)
     ELS
     dta $44,a(m4_screen)        ; row 0: LMS + mode 4
     dta $04,$04,$84             ; rows 1-3, DLI on row 3
@@ -14264,7 +14315,7 @@ m4_screen
 
     IFT BG_LMS_SCROLL_TEST=1
 lms_scroll_map
-    :1536 dta [[[#>>6]&3]*32]+[#&31]
+    :LMS_SCROLL_ROW_STRIDE*LMS_SCROLL_MAP_HEIGHT dta [[[#/LMS_SCROLL_ROW_STRIDE]&3]*32]+[#&31]
 
 lms_scroll_font_patterns
     :128 dta [[#&3]*$55]
@@ -14278,6 +14329,12 @@ lms_scroll_x
     dta 0
 lms_scroll_tick
     dta 0
+lms_scroll_v_tick
+    dta 0
+lms_scroll_v_y
+    dta 0
+lms_scroll_v_offset
+    dta 0,0
 lms_scroll_ready
     dta 0
 lms_scroll_font_banks
@@ -14290,6 +14347,8 @@ lms_scroll_test_init
     STA $D400                   ; hide display while preparing the test font
     LDA #$00
     STA $D01A                   ; COLBK
+    STA $D404                   ; HSCROL
+    STA $D405                   ; VSCROL
     LDA #$36
     STA $D016                   ; COLPF0
     LDA #$7A
@@ -14342,7 +14401,17 @@ lms_scroll_font_ptr_ready
     BNE lms_scroll_font_bank
     LDA #0
     STA lms_scroll_x
+    STA lms_scroll_v_tick
+    STA lms_scroll_v_y
+    STA lms_scroll_v_offset
+    STA lms_scroll_v_offset+1
+    IFT BG_LMS_FINE_SCROLL_TEST=1
+    LDA #$0F
+    EIF
     STA lms_scroll_tick
+    IFT BG_LMS_FINE_SCROLL_TEST=1
+    STA $D404
+    EIF
     JSR lms_scroll_patch_lms
     LDA #1
     STA lms_scroll_ready
@@ -14353,6 +14422,26 @@ lms_scroll_font_ptr_ready
     RTS
 
 lms_scroll_test_vbi
+    IFT BG_LMS_FINE_SCROLL_TEST=1
+    LDA lms_scroll_tick
+    BEQ lms_scroll_vbi_wrap
+    DEC lms_scroll_tick
+    LDA lms_scroll_tick
+    STA $D404
+    JMP lms_scroll_vbi_done
+lms_scroll_vbi_wrap
+    LDA #$0F
+    STA lms_scroll_tick
+    STA $D404
+    LDA lms_scroll_x
+    CLC
+    ADC #4
+    AND #$1F
+    STA lms_scroll_x
+    JSR lms_scroll_patch_lms
+lms_scroll_vbi_done
+    ELS
+        IFT BG_LMS_VSCROLL_TEST=0
     INC lms_scroll_tick
     LDA lms_scroll_tick
     AND #3
@@ -14366,6 +14455,38 @@ lms_scroll_test_vbi
 lms_scroll_vbi_patch
     JSR lms_scroll_patch_lms
 lms_scroll_vbi_done
+        EIF
+    EIF
+    IFT BG_LMS_VSCROLL_TEST=1
+    INC lms_scroll_v_tick
+    LDA lms_scroll_v_tick
+    CMP #8
+    BCC lms_scroll_v_store
+    LDA #0
+    STA lms_scroll_v_tick
+    INC lms_scroll_v_y
+    LDA lms_scroll_v_y
+    CMP #LMS_SCROLL_VERTICAL_PERIOD
+    BCC lms_scroll_v_add_offset
+    LDA #0
+    STA lms_scroll_v_y
+    STA lms_scroll_v_offset
+    STA lms_scroll_v_offset+1
+    JMP lms_scroll_v_patch
+lms_scroll_v_add_offset
+    CLC
+    LDA lms_scroll_v_offset
+    ADC #LMS_SCROLL_ROW_STRIDE
+    STA lms_scroll_v_offset
+    LDA lms_scroll_v_offset+1
+    ADC #0
+    STA lms_scroll_v_offset+1
+lms_scroll_v_patch
+    JSR lms_scroll_patch_lms
+lms_scroll_v_store
+    LDA lms_scroll_v_tick
+    STA $D405
+    EIF
     RTS
 
 lms_scroll_patch_lms
@@ -14376,6 +14497,15 @@ lms_scroll_patch_lms
     LDA #>lms_scroll_map
     ADC #0
     STA LMS_SCROLL_SRC+1
+    IFT BG_LMS_VSCROLL_TEST=1
+    CLC
+    LDA LMS_SCROLL_SRC
+    ADC lms_scroll_v_offset
+    STA LMS_SCROLL_SRC
+    LDA LMS_SCROLL_SRC+1
+    ADC lms_scroll_v_offset+1
+    STA LMS_SCROLL_SRC+1
+    EIF
     LDA #<(m4_dl+3)
     STA LMS_SCROLL_DST
     LDA #>(m4_dl+3)
@@ -14390,7 +14520,7 @@ lms_scroll_patch_row
     STA (LMS_SCROLL_DST),Y
     LDA LMS_SCROLL_SRC
     CLC
-    ADC #$40                    ; 64 character codes per virtual row
+    ADC #LMS_SCROLL_ROW_STRIDE
     STA LMS_SCROLL_SRC
     BCC lms_scroll_source_no_carry
     INC LMS_SCROLL_SRC+1
