@@ -14882,6 +14882,8 @@ tile_colbase_hi
     :32 dta >(sprite_test_data+[#*81])
 tt_tail_mask
     dta $00,$C0,$F0,$FC,$FF
+tt_lead_mask
+    dta $FF,$3F,$0F,$03
 
 clear_test_bbc_vram
     LDA #<vram
@@ -15826,6 +15828,13 @@ tt_nophase
     ASL
     ORA TL_N
     STA TL_N
+    LDA TL_K
+    BNE tt_tail_check
+    LDY TL_DPH
+    LDA tt_lead_mask,Y
+    AND TL_N
+    STA TL_N
+tt_tail_check
     LDA TL_K
     CLC
     ADC #1

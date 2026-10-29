@@ -60,9 +60,10 @@ Important corrections made during this session:
   rotate left through carry twice. `tt_draw` decodes that byte address into a
   row index for the 81-byte column-major sheet.
 - **Column count** includes the encoded inclusive width and effective phase;
-  pixels beyond the final sprite pixel are masked in the last destination byte.
-  Without that mask, sprite 5 (`w = $50`, six pixels inclusive) was drawn as
-  eight pixels, causing native sprites to spill horizontally into padding.
+  pixels before the first sprite pixel and beyond the final sprite pixel are
+  masked in the first and last destination bytes. Without these masks,
+  misaligned native sprites can spill into neighboring pixels; sprite 5
+  (`w = $50`, six pixels inclusive) previously extended into padding.
 
 ## 5. Flips (verified against the plotter, not yet against the screen)
 
