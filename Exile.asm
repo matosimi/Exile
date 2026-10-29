@@ -4551,7 +4551,7 @@ collided_in_last_cycle
 player_teleporting_flag
     dta $00
 .IFNDEF BG_RENDERER_MODE
-BG_RENDERER_MODE=1             ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
+BG_RENDERER_MODE=1            ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
 .ENDIF
 .IFNDEF BG_FLIP_TEST
 BG_FLIP_TEST=0
@@ -14494,16 +14494,6 @@ tt_foreground_x_add
     ADC #0
     AND #$1F
     STA TL_A
-    LDA TL_T
-    CMP #2
-    BCC tt_foreground_source_column_ready
-    LDA tt_fg_flip,X
-    BMI tt_foreground_source_column_ready
-    INC TL_A
-    LDA TL_A
-    AND #$1F
-    STA TL_A
-tt_foreground_source_column_ready
     LDA TL_X
     CMP #$5F
     BNE tt_foreground_source_column_done
@@ -15492,16 +15482,6 @@ tt_xdelta_add
     ADC #0
     AND #$1F
     STA TL_A
-    LDA TL_T
-    CMP #2
-    BCC tt_source_col_ready
-    LDA TL_FL
-    BMI tt_source_col_ready
-    INC TL_A
-    LDA TL_A
-    AND #$1F
-    STA TL_A
-tt_source_col_ready
     LDA TL_X
     CMP #$5F
     BNE tt_source_col_done
@@ -15643,14 +15623,13 @@ tt_source_start
     LSR
     LSR
     CLC
-    ADC TL_PH
-    ADC #1
-    AND #3
-    EOR #3
+    ADC TL_T
+    CLC
+    ADC TL_DPH
     CLC
     ADC #1
     AND #3
-    STA TL_PH                    ; mirrored phase = -(width + phase) mod 4
+    STA TL_PH                    ; phase from the flipped edge of the source
     ASL
     STA TL_S
     LDA #8
@@ -15672,6 +15651,36 @@ tt_phase_ready
     LSR
     LSR
     STA TL_W
+    LDA TL_FL
+    BMI tt_source_column_hflip
+    LDA TL_T
+    CMP TL_DPH
+    BCC tt_source_column_ready
+    BEQ tt_source_column_ready
+    INC TL_A
+    LDA TL_A
+    AND #$1F
+    STA TL_A
+    JMP tt_source_column_ready
+tt_source_column_hflip
+    LDX TL_X
+    LDA sprite_width_lookup,X
+    LSR
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC TL_DPH
+    AND #3
+    CLC
+    ADC TL_T
+    CMP #3
+    BCS tt_source_column_ready
+    DEC TL_A
+    LDA TL_A
+    AND #$1F
+    STA TL_A
+tt_source_column_ready
     LDA TL_MAP_TMP
     AND #3
     CLC
@@ -15965,6 +15974,7 @@ cal_sloop
     LSR
     LSR
     AND #3
+    STA TL_DPH
     STA TL_MAP_TMP
     LDA sprite_offset_a_lookup,X ; pixel phase (plotter: bits 4-5 of a)
     LSR
@@ -15972,8 +15982,10 @@ cal_sloop
     LSR
     LSR
     AND #3
-    CLC
-    ADC TL_MAP_TMP
+    STA TL_T
+    LDA TL_DPH
+    SEC
+    SBC TL_T
     AND #3
     STA TL_PH
     ASL

@@ -85,8 +85,11 @@ Important corrections made during this session:
 - Native flip selection combines sprite width/height low bits with
   `square_orientation`, matching the plotter's unshifted drawing flags. The
   plotter shifts a temporary copy for clipping, then reloads the unshifted
-  flags before drawing pixels. Source-order corrections still need visual
-  confirmation against the reference capture.
+  flags before drawing pixels.
+- H-flipped sprites align from the rightmost source pixel. Their pixel phase
+  uses destination phase + source phase + inclusive width, and their starting
+  source column is adjusted to match that alignment. This remains to be checked
+  against captures at all four destination phases.
 - Native source-row addressing uses the BBC packed-pointer calculation,
   including the carry from `b + height`. Effective V-flag conditions for
   selecting the start row and traversal direction remain experimental; using
@@ -168,8 +171,8 @@ Important corrections made during this session:
 - Applies the BBC per-square palette mapping to source colors and keeps source
   color 0 transparent, even when a visible palette color maps to Atari index 0.
 - Phase alignment is applied for both orientations. H-flipped sprites use the
-  mirrored phase and adjacent source column on the opposite side; this change
-  is experimental and needs comparison against the reference.
+  rightmost source pixel to derive both phase and starting source column; verify
+  against the reference at all four destination phases.
 - Calibration routine `calib_test` draws sprites 0, 1, 36, 39, 43, 52, 68, 98
   in normal, H-flipped, V-flipped rows. Recheck its H-flipped row against the
   reference (`scratchpad/calib_reference.png`) with the experimental polarity.
@@ -200,7 +203,8 @@ in the converter output, not made of squares. Ignored in the comparison.
 2. Determine H-flip polarity with one known flipped square; current polarity is
   chosen by visual proximity, not by the plotter's apparent bit contract.
 3. Vertical flip start line and `background_y_offset` units: not confirmed.
-4. Pixel phase for flipped sprites: not implemented.
+4. Capture-verify flipped pixel phase and source-column alignment at each
+   destination phase.
 5. Palette (`$9C` / `$CF`): colour only; out of scope for shapes.
 6. Row 0 and left edge squares: coverage is low; check whether those squares
    are plain or object squares via `FLAG_TABLE`.
