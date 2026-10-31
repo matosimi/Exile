@@ -14951,6 +14951,14 @@ m4_incremental_save_position
     RTS
 
 m4_incremental_mark_work_cell
+    JSR m4_incremental_get_work_cell
+    LDX m4_incremental_dirty_byte
+    LDA m4_incremental_work,X
+    ORA m4_incremental_dirty_mask
+    STA m4_incremental_work,X
+    RTS
+
+m4_incremental_get_work_cell
     LDA m4_incremental_cell_row
     CLC
     ADC m4_game_scroll_y
@@ -14992,10 +15000,6 @@ m4_incremental_bank_ready
     TAX
     LDA m4_incremental_bit_masks,X
     STA m4_incremental_dirty_mask
-    LDX m4_incremental_dirty_byte
-    LDA m4_incremental_work,X
-    ORA m4_incremental_dirty_mask
-    STA m4_incremental_work,X
     RTS
 
 m4_incremental_clear_dirty
@@ -16690,6 +16694,9 @@ tt_has_bg
     CLC
     ADC #11
     TAX
+    LDA TL_J
+    CMP #6
+    BEQ tt_skip_debug_flag_store
     LDA DBG_OBJFLAG             ; DEBUG: pack path in top 2 bits, terrain value in low 6
     ASL
     ASL
@@ -16699,6 +16706,7 @@ tt_has_bg
     ASL
     ORA TL_V
     STA FLAG_TABLE,X
+tt_skip_debug_flag_store
     IFT BG_RENDERER_MODE=2
         LDA this_object_sprite
         TAX
@@ -16732,8 +16740,12 @@ tt_has_bg
     CLC
     ADC #11
     TAX
+    LDA TL_J
+    CMP #6
+    BEQ tt_skip_debug_dump_store
     LDA TL_X
     STA DUMP_TABLE,X
+tt_skip_debug_dump_store
     LDX TL_X
     LDA sprite_offset_a_lookup,X
     STA TL_A
@@ -17247,6 +17259,14 @@ tt_lok
     IFT BG_INCREMENTAL_LMS_RENDER=1
         LDA m4_incremental_clip
         BEQ tt_lm4_clip_done
+        LDA SPR_Y
+        LSR
+        LSR
+        LSR
+        STA m4_incremental_cell_row
+        LDA TL_DC
+        STA m4_incremental_cell_col
+        JSR m4_incremental_get_work_cell
         LDX m4_incremental_dirty_byte
         LDA m4_incremental_work,X
         AND m4_incremental_dirty_mask
@@ -17312,30 +17332,7 @@ m4_incremental_probe_line_loop
     LSR
     LSR
     LSR
-    CLC
-    ADC m4_game_scroll_y
-    STA m4_incremental_row_tmp
-    AND #3
-    ASL
-    ASL
-    STA m4_incremental_dirty_byte
-    LDA m4_incremental_row_tmp
-    LSR
-    LSR
-    CLC
-    ADC m4_game_scroll_band_base
-    CMP #6
-    BCC m4_incremental_probe_bank_ready
-    SEC
-    SBC #6
-m4_incremental_probe_bank_ready
-    ASL
-    ASL
-    ASL
-    ASL
-    CLC
-    ADC m4_incremental_dirty_byte
-    STA m4_incremental_dirty_byte
+    STA m4_incremental_cell_row
     LDA #0
     STA m4_incremental_probe_col
 m4_incremental_probe_col_loop
@@ -17344,21 +17341,9 @@ m4_incremental_probe_col_loop
     ADC m4_incremental_probe_col
     CMP #32
     BCS m4_incremental_probe_next_col
-    CLC
-    ADC m4_game_scroll_x
-    AND #$1F
-    STA m4_incremental_col_tmp
-    AND #7
-    TAY
-    LDA m4_incremental_bit_masks,Y
-    STA m4_incremental_dirty_mask
-    LDA m4_incremental_col_tmp
-    LSR
-    LSR
-    LSR
-    CLC
-    ADC m4_incremental_dirty_byte
-    TAX
+    STA m4_incremental_cell_col
+    JSR m4_incremental_get_work_cell
+    LDX m4_incremental_dirty_byte
     LDA m4_incremental_work,X
     AND m4_incremental_dirty_mask
     BNE m4_incremental_probe_found
@@ -17415,11 +17400,19 @@ tt_region_reverse_same_row
     EIF
 tt_row
     INC TL_J
-    LDA TL_J
     IFT BG_RENDERER_MODE=2
+        LDA TL_J
         CMP #4                      ; match 128-line BBC reference window
     ELS
-    CMP #6                      ; rows -1..5
+        LDA screen_start_square_y_low_tiles
+        BEQ tt_row_aligned
+        LDA TL_J
+        CMP #7                      ; rows -1..6 when the bottom row is partial
+        BEQ tt_done
+        JMP tt_j
+tt_row_aligned
+        LDA TL_J
+        CMP #6                      ; rows -1..5 at a tile-aligned camera position
     EIF
     BEQ tt_done
     JMP tt_j

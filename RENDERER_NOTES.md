@@ -319,6 +319,24 @@ in the converter output, not made of squares. Ignored in the comparison.
   pixel-for-pixel. In a separate 600-frame right-scroll sample from the start
   location, incremental rendering advanced 152 cells versus 16 for full redraw;
   this is a single-scene throughput sample, not a general benchmark.
+  The per-glyph clip check now recomputes the dirty-map byte and bit from the
+  glyph's actual screen row and column; it no longer reuses the first dirty
+  cell found by the sprite-level overlap probe. That stale lookup could leave
+  cleared cells blank when a sprite crossed multiple dirty cells. Both the
+  standalone viewer and Mode 1 renderer assemble with the fix. Eight-cell
+  horizontal and vertical scroll/reversal runs match the full-redraw viewer
+  pixel-for-pixel, and returning to the starting camera reproduces the initial
+  frame exactly. A dirty bit represents one displayed character cell, whose
+  glyph is eight bytes; neither a four-row charset bank redraw nor a complete
+  sprite redraw is required.
+  The vertical background-square scan also includes square row 6 whenever the
+  camera has a nonzero vertical offset. That row is partially visible at the
+  bottom of the 24-row display; omitting it left the bottom blank until the
+  camera advanced by four character rows and the square moved into the normal
+  scan range. The extra row is excluded from the fixed 10x7 debug tables.
+  Incremental and full-redraw builds now match pixel-for-pixel at each step;
+  after 32 downward steps, the previously blank bottom row receives sprite
+  pixels on steps 33-35, including all partial-offset phases.
 - The Mode 4 DLI saves A/X in dedicated RAM bytes instead of consuming page-1
   stack space. Keep the background debug table at `$BA92` (not `$BA90`): the
   VBI handler's `RTI` is at `$BA91`.

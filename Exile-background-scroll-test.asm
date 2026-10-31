@@ -1230,11 +1230,10 @@ sprite_offset_b_lookup
 m4_dli
     ; Keep DLI register saves out of page 1, which also contains code.
     STA m4_dli_saved_a
-    TXA
-    STA m4_dli_saved_x
+    STX m4_dli_saved_x
     LDX m4_dli_index
     LDA m4_charset_pages,X
-        sta $d40a ;wsync
+    sta $d40a ;wsync
     STA CHBASE
     inc m4_dli_index
     LDX m4_dli_saved_x
@@ -1518,6 +1517,14 @@ m4_incremental_save_position
     RTS
 
 m4_incremental_mark_work_cell
+    JSR m4_incremental_get_work_cell
+    LDX m4_incremental_dirty_byte
+    LDA m4_incremental_work,X
+    ORA m4_incremental_dirty_mask
+    STA m4_incremental_work,X
+    RTS
+
+m4_incremental_get_work_cell
     LDA m4_incremental_cell_row
     CLC
     ADC m4_game_scroll_y
@@ -1559,10 +1566,6 @@ m4_incremental_bank_ready
     TAX
     LDA m4_incremental_bit_masks,X
     STA m4_incremental_dirty_mask
-    LDX m4_incremental_dirty_byte
-    LDA m4_incremental_work,X
-    ORA m4_incremental_dirty_mask
-    STA m4_incremental_work,X
     RTS
 
 m4_incremental_clear_dirty
@@ -1774,22 +1777,13 @@ pix_rev                        ; 2-bit pixel order reversed within a byte (horiz
 
 ;; clear the six charsets (6 KB at vramfont), for the test frame
 clear_charsets
-    LDA #<vramfont
-    STA SPR_DST
-    LDA #>vramfont
-    STA SPR_DST+1
-    LDX #24                     ; 24 pages
-cc_page
-    LDY #0
-    LDA #0
-cc_byte
-    STA (SPR_DST),Y
-    INY
-    BNE cc_byte
-    INC SPR_DST+1
-    DEX
-    BNE cc_page
-    RTS
+	LDY #0
+	LDA #0
+@
+:24	STA vramfont+#*$100,y
+	INY
+	BNE @-
+	RTS
 
 TL_V=$BF10
 TL_X=$BF11
@@ -2367,6 +2361,14 @@ tt_lok
     JSR glyph_addr             ; SPR_DST already includes the line within the cell (Y&7)
         LDA m4_incremental_clip
         BEQ tt_lm4_clip_done
+        LDA SPR_Y
+        LSR
+        LSR
+        LSR
+        STA m4_incremental_cell_row
+        LDA TL_DC
+        STA m4_incremental_cell_col
+        JSR m4_incremental_get_work_cell
         LDX m4_incremental_dirty_byte
         LDA m4_incremental_work,X
         AND m4_incremental_dirty_mask
@@ -2413,30 +2415,7 @@ m4_incremental_probe_line_loop
     LSR
     LSR
     LSR
-    CLC
-    ADC m4_game_scroll_y
-    STA m4_incremental_row_tmp
-    AND #3
-    ASL
-    ASL
-    STA m4_incremental_dirty_byte
-    LDA m4_incremental_row_tmp
-    LSR
-    LSR
-    CLC
-    ADC m4_game_scroll_band_base
-    CMP #6
-    BCC m4_incremental_probe_bank_ready
-    SEC
-    SBC #6
-m4_incremental_probe_bank_ready
-    ASL
-    ASL
-    ASL
-    ASL
-    CLC
-    ADC m4_incremental_dirty_byte
-    STA m4_incremental_dirty_byte
+    STA m4_incremental_cell_row
     LDA #0
     STA m4_incremental_probe_col
 m4_incremental_probe_col_loop
@@ -2445,21 +2424,9 @@ m4_incremental_probe_col_loop
     ADC m4_incremental_probe_col
     CMP #32
     BCS m4_incremental_probe_next_col
-    CLC
-    ADC m4_game_scroll_x
-    AND #$1F
-    STA m4_incremental_col_tmp
-    AND #7
-    TAY
-    LDA m4_incremental_bit_masks,Y
-    STA m4_incremental_dirty_mask
-    LDA m4_incremental_col_tmp
-    LSR
-    LSR
-    LSR
-    CLC
-    ADC m4_incremental_dirty_byte
-    TAX
+    STA m4_incremental_cell_col
+    JSR m4_incremental_get_work_cell
+    LDX m4_incremental_dirty_byte
     LDA m4_incremental_work,X
     AND m4_incremental_dirty_mask
     BNE m4_incremental_probe_found
@@ -2490,6 +2457,13 @@ tt_next
     JMP tt_i
 tt_row
     INC TL_J
+    LDA screen_start_square_y_low_tiles
+    BEQ tt_row_aligned
+    LDA TL_J
+    CMP #7
+    BEQ tt_done
+    JMP tt_j
+tt_row_aligned
     LDA TL_J
     CMP #6
     BEQ tt_done
