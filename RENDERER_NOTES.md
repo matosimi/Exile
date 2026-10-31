@@ -139,10 +139,10 @@ Important corrections made during this session:
 
 ## 8. Debug instrumentation (temporary, remove before finishing)
 
-- `DUMP_TABLE = $BA90`: 70 bytes, selected sprite ID per window square
+- `DUMP_TABLE = $BA92`: 70 bytes, selected sprite ID per window square
   (`(j+1)*10 + (i+1)` index), `$FF` = empty or skipped. This is the masked
   `background_sprite_lookup` result used to read the atlas.
-- `DUMP_DONE = $BAD6`: 1 when a pass has completed.
+- `DUMP_DONE = $BAD8`: 1 when a pass has completed.
 - `FLAG_TABLE = $BC00`: 70 bytes, path in bits 7-6 and resolved lookup value
   in bits 5-0; `$FF` means unvisited. Decode with `path = value >> 6` and
   `lookup = value & $3F`. For path 1, this is the post-handler return value;
@@ -161,7 +161,7 @@ Important corrections made during this session:
   retaining sprites from object slots that became empty.
 - Foreground and background sprites share the native `tt_draw` pixel writer,
   atlas addressing, source-pixel transparency, and palette mapping. Their
-  position/orientation setup is separate: foreground positions come from the
+  position/orientation setup is separate: foreground placement starts from
   live object coordinates, while background placement comes from square
   coordinates and per-square offsets. Native mode does not call the BBC
   `plot_sprite` routine for its foreground pass.
@@ -169,23 +169,35 @@ Important corrections made during this session:
   opaque sprite pixel is written only where the destination pixel is `$00`.
   This prevents foreground objects behind already-rendered background pixels
   from appearing on top.
-- Native foreground sprites currently use full atlas geometry. Teleport resize
-  and vertical-placement behavior is not yet mirrored; capturing the plotter's
-  post-resize values also included incremental-redraw deltas and caused visual
-  corruption. The renderer keeps each object's palette in scratch memory rather
-  than mutating the live game palette. Native particles are drawn from the
-  evolved particle stack between the background and foreground passes; their
-  Mode 2 pixel patterns are converted with `pix_hi`/`pix_lo` and XORed into the
-  native framebuffer.
-- Native mode 1 defaults `BG_DISABLE_MODE0_RENDERING` to `1`. This skips the
-  BBC plotter's pixel-writing pass and the reference VRAM edge-clear loops
-  during scrolling. Cached background-strip calls, sprite-bound/update
-  calculations, and scrolling/background-object bookkeeping remain enabled for
-  game logic. Set
-  `-d:BG_DISABLE_MODE0_RENDERING=0` for diagnostic builds that also run the
-  reference draw work.
-  `BG_SKIP_REFERENCE_PLOTTER_DRAW` remains a compatibility default for the new
-  switch.
+- The foreground pass captures the current sprite's teleport-adjusted source Y,
+  height, and object Y at `plot_sprite_after_calculations`, before the legacy
+  incremental-redraw path changes geometry. These values drive `tt_draw`, so
+  teleport resizing and vertical placement match the reference without
+  importing redraw deltas. If no current geometry was calculated, the native
+  pass falls back to the sprite lookup tables; if calculated geometry has zero
+  height, it skips the sprite rather than drawing the extra row implied by
+  `tt_draw`'s inclusive height loop. The renderer keeps each object's palette
+  in scratch memory rather than mutating the live game palette. Native particles
+  are drawn from the evolved particle stack between the background and
+  foreground passes; their Mode 2 pixel patterns are converted with
+  `pix_hi`/`pix_lo` and XORed into the native framebuffer.
+- A frozen first-render comparison (`BG_STOP_AFTER_RENDER_TEST=1`) reduced the
+  mode 0 versus native mode 1 mismatch from 756 to 702 pixels (0.94% to 0.87%
+  of the 336x240 capture) in the latest Altirra run on 2026-10-29. This
+  supersedes the earlier 540-pixel measurement; remaining differences still
+  need visual validation.
+- The same frozen run differed by 198 pixels between ordinary mode 1 and
+  `BG_REAL_LMS_SCROLL=1`. This LMS result is not pixel-identical and needs
+  investigation separately from the foreground clipping change.
+- Native mode 1 defaults `BG_DISABLE_MODE0_RENDERING` to `1`. With
+  `BG_INCREMENTAL_LMS_RENDER=1`, the Mode 0 plotter still runs its object and
+  scroll redraw decisions, but its pixel and edge-clear accesses to BBC VRAM
+  are suppressed; the affected source cells are only dirty-region signals.
+  The native renderer maps those signals to LMS glyph cells, clears only the
+  dirty glyphs, then redraws native backgrounds, particles, and foreground
+  objects clipped to that mask. It does not read `$6000-$7FFF` as a rendering
+  source. `BG_SKIP_REFERENCE_PLOTTER_DRAW` remains a compatibility default
+  for `BG_DISABLE_MODE0_RENDERING`.
 - Joystick 1 directions, trigger, and START are sampled by `gamevbi` and mapped
   to the game's existing Q/W/P/L, Space, and Copy controls. `read_input` lives
   at `$BB00`, in the gap before `flag_table` at `$BC00`; `$80A0` is occupied by
@@ -260,6 +272,56 @@ in the converter output, not made of squares. Ignored in the comparison.
   rows, and advances the 32-character viewport one cell every four frames.
   The map repeats every 32 cells; this prototype tests coarse horizontal
   display-list scrolling only, not HSCROL, VSCROL, or game-world rendering.
+- Build the live native game renderer with camera-locked coarse LMS addressing
+  using `mads Exile.asm -d:BG_RENDERER_MODE=1 -d:BG_REAL_LMS_SCROLL=1
+  -d:BG_DISABLE_MODE0_RENDERING=1 -o:Exile-real-lms-scroll.xex`. It renders
+  the real game scene and keeps the existing full-frame charset redraw, while
+  rotating glyph destinations and per-row LMS addresses from the game camera.
+  Fine camera movement remains software-positioned; ANTIC HSCROL/VSCROL and
+  incremental edge redraw are deliberately not enabled in this diagnostic.
+  This verifies the live-world ring mapping, not a rendering-speed improvement.
+- Build the incremental native LMS renderer with
+  `mads Exile.asm -d:BG_RENDERER_MODE=1 -d:BG_REAL_LMS_SCROLL=1
+  -d:BG_INCREMENTAL_LMS_RENDER=1 -o:Exile-incremental-lms.xex`. This variant
+  reuses Mode 0's object redraw and scroll-strip decisions only as dirty-region
+  signals. The native LMS renderer clears affected glyphs and redraws native
+  background, particle, and foreground pixels under the dirty-cell mask. The
+  first frame and camera jumps larger than one cell use a full native redraw;
+  ordinary scroll steps add only the entering LMS edge cells.
+  AltirraBridge verification: the frozen initial native frame left
+  `$6000-$7FFF` all zero, while the Mode 0 reference frame contained 3,254
+  nonzero bytes. The frozen screenshots differed by 660 pixels out of 80,640
+  (0.82%), matching the existing full-native baseline. In an active run, the
+  Mode 1 build remained responsive to right joystick input for 600 video
+  frames, changed 566 screenshot pixels, and still left `$6000-$7FFF` zero.
+  This confirms the native-only source and an active incremental update; it is
+  not a claim of pixel equivalence throughout gameplay. The first incremental
+  implementation averaged 2 game-loop iterations per 120-frame gate, versus
+  2.3 for full native and 5.7 for Mode 0 reference. The optimized v2 build
+  averaged 7 iterations across three gates (8, 6, 7), versus 2.3 for full
+  native (3, 2, 2) and 5.7 for Mode 0 reference (6, 5, 6). During separate
+  1,200-frame right/up input runs, v2 advanced 66/70 game loops, moved the
+  camera, remained responsive, and left `$6000-$7FFF` zero. These throughput
+  checks show a substantial improvement, but scrolling output still needs
+  visual validation against the reference at a matched camera position.
+- Build the standalone, reduced background-only joystick map viewer with
+  `mads Exile-background-scroll-test.asm -o:Exile-background-scroll-test.xex`.
+  This source retains the real map lookup/data, native sprite plotter, LMS ring,
+  incremental dirty-cell engine, and joystick camera loop; it omits the game
+  loop, physics, BBC/reference renderer, foreground/particle rendering, and
+  synthetic diagnostics. It redraws only background sprites as the joystick
+  moves the camera by one native character cell and leaves BBC reference VRAM
+  unused. The incremental culling probe includes one conservative far-edge cell
+  so sprites crossing a dirty boundary are not skipped. The reduced build
+  matched the previous viewer’s initial frame exactly, scrolled in all four
+  joystick directions, and left `$6000-$7FFF` zero. Controlled eight-cell
+  scroll tests in all four directions matched the full-redraw viewer
+  pixel-for-pixel. In a separate 600-frame right-scroll sample from the start
+  location, incremental rendering advanced 152 cells versus 16 for full redraw;
+  this is a single-scene throughput sample, not a general benchmark.
+- The Mode 4 DLI saves A/X in dedicated RAM bytes instead of consuming page-1
+  stack space. Keep the background debug table at `$BA92` (not `$BA90`): the
+  VBI handler's `RTI` is at `$BA91`.
 - Build the fine horizontal-scroll variant with
   `mads Exile.asm -d:BG_RENDERER_MODE=2 -d:BG_LMS_SCROLL_TEST=1 -d:BG_LMS_FINE_SCROLL_TEST=1 -o:Exile-lms-fine-scroll-test.xex`.
   This enables HSCROL on each Mode 4 row and counts it down from 15 to 0 so
@@ -282,15 +344,17 @@ in the converter output, not made of squares. Ignored in the comparison.
   codes horizontally or one 80-code row vertically. The 32-row map repeats
   every four rows. All scroll variants remain synthetic tests, not game-world
   rendering.
-- `BG_RENDERER_MODE=0` selects the BBC-VRAM game reference (default), `1`
+- `BG_RENDERER_MODE=0` selects the BBC-VRAM game reference, `1`
   selects the native game map, `2` selects the native synthetic map, and `3`
-  selects the same synthetic map through the BBC plotter and converter. Mode 3
+  selects the same synthetic map through the BBC plotter and converter. The
+  source fallback is mode 1; `build.cmd` explicitly selects mode 0. Mode 3
   brackets the pass with `change_display_mode`, matching the normal background
   strip's overwrite behavior; `plot_sprite` applies
   `palette_value_to_pixel_lookup` during that pass.
-- Mode 1 disables mode 0 plotter drawing by default. To enable the BBC
-  reference draw work in a diagnostic build, use
-  `-d:BG_RENDERER_MODE=1 -d:BG_DISABLE_MODE0_RENDERING=0`.
+- Standard mode 1 suppresses Mode 0 plotter pixel writes by default.
+  Incremental LMS mode 1 also suppresses those writes, but runs the plotter's
+  redraw decisions to mark native dirty cells. `BG_DISABLE_MODE0_RENDERING=1`
+  is therefore valid and expected in this configuration.
 - Ready-to-capture paired test builds: `Exile-reference-maptest.xex` (mode 3)
   and `Exile-maptest.xex` (mode 2). Capture both from the same start state,
   then combine with
@@ -335,7 +399,7 @@ in the converter output, not made of squares. Ignored in the comparison.
   NMI simulated on `$FFFA`, `SETVBV`/`XITVBV` stubs. Very slow (hundreds of
   millions of steps for one main-loop pass) and not reliable for full-screen
   output. Use Altirra instead.
-- Tables for debugging: read `$BA90`, `$BAD6`, `$BC00` in Altirra's memory
+- Tables for debugging: read `$BA92`, `$BAD8`, `$BC00` in Altirra's memory
   viewer after a run.
 
 ## 13. Key files

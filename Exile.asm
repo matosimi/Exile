@@ -1868,6 +1868,8 @@ secondary_stack_free_slot_found
     STA tt_fg_flip,X
     LDA this_object_flags
     STA tt_fg_flags,X
+    LDA #0
+    STA tt_fg_geometry_valid
     EIF
 	LDA #%00111111                  ; objects are plotted and $3f
 	STA sprite_and
@@ -2018,7 +2020,20 @@ plot_sprite
 ;; plot, and whether the sprite crosses the edge of the screen - if
 ;; so, we alter its size accordingly.
 plot_sprite_calculation_loop
-    BCS plot_sprite_skip_calculations
+    IFT BG_RENDERER_MODE=1
+        BCC plot_sprite_calculation_continue
+        JMP plot_sprite_skip_calculations
+plot_sprite_calculation_continue
+    ELS
+        BCS plot_sprite_skip_calculations
+    EIF
+    IFT BG_RENDERER_MODE=1
+        CPX #$02
+        BNE plot_sprite_current_geometry_valid
+        LDA #1
+        STA tt_fg_geometry_valid
+plot_sprite_current_geometry_valid
+    EIF
     CPX #$02                    
     BCC plot_sprite_continued   ; taken if X<2 (and therefore done)
     LDY this_object_sprite-2,X  ; this_object_sprite/this_object_sprite_old
@@ -2164,6 +2179,19 @@ L0E06
     SEC
     BCS plot_sprite_skip_calculations
 plot_sprite_after_calculations
+    IFT BG_RENDERER_MODE=1
+        LDX current_object
+        LDA this_object_y
+        STA tt_fg_y,X
+        LDA this_object_y_low
+        STA tt_fg_y_low,X
+        LDA this_sprite_b
+        STA tt_fg_b,X
+        LDA this_sprite_height
+        STA tt_fg_height,X
+        LDA tt_fg_geometry_valid
+        STA tt_fg_geom_valid,X
+    EIF
     LDA skip_sprite_calculation_flags
     AND #$0F
     BEQ consider_whether_object_has_changed
@@ -2270,7 +2298,9 @@ L0EB6
 object_needs_redrawing_in
     IFT BG_RENDERER_MODE=1
         IFT BG_DISABLE_MODE0_RENDERING=1
+            IFT BG_INCREMENTAL_LMS_RENDER=0
             RTS
+            EIF
         EIF
     EIF
     LDA #$02
@@ -2686,6 +2716,12 @@ L105A
 ;;  consider what is there already - if it's background data ($80 is
 ;;  set), don't.
 plot_screen_loop
+    IFT BG_RENDERER_MODE=1
+        IFT BG_INCREMENTAL_LMS_RENDER=1
+            JSR m4_reference_mark_screen_cell
+            JMP plot_screen_next_column
+        EIF
+    EIF
 L105C DEX                     ; actually either DEX or INX from $0fbb
     LDA $100,X                 ; get left/right pixel from stack
 L1060 DEX                     ; actually either DEX or INX from $0fbe
@@ -2705,8 +2741,12 @@ L1064 EOR (screen_address),Y   ; read the current screen data
 L1066 BMI L106A ; actually either "EOR, BMI $106a" or "BMI $1068, EOR" from $10f0
 L1068:
     STA (screen_address),Y ; plot the sprite to screen depending on plotting mode
+plot_screen_next_column
 L106A
     TYA                         ; offset in character row
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+    SEC
+    EIF
     SBC #$08                    ; next column
     TAY                         ; 
     BCS plot_screen_loop        ; taken if offset>=0
@@ -3086,45 +3126,46 @@ function_table
 	dta l(move_down-1)
 	dta l(just_rts-1)
 function_table_h
-	dta h([[pause-1]<<1] | 0)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[change_to_weapon-1]<<1] | 1)
-	dta h([[f9_pressed-1]<<1] | 0)
-	dta h([[retrieve_object-1]<<1] | 1)
-	dta h([[fire_weapon-1]<<1] | 1)
-	dta h([[reset_gun_aim-1]<<1] | 0)
-	dta h([[scroll_viewpoint-1]<<1] | 1)
-	dta h([[scroll_viewpoint-1]<<1] | 1)
-	dta h([[scroll_viewpoint-1]<<1] | 1)
-	dta h([[scroll_viewpoint-1]<<1] | 1)
-	dta h([[lower_gun_aim-1]<<1] | 0)
-	dta h([[raise_gun_aim-1]<<1] | 0)
-	dta h([[use_booster-1]<<1] | 0)
-	dta h([[or_extra_with_0f-1]<<1] | 0)
-	dta h([[swap_direction-1]<<1] | 1)
-	dta h([[play_whistle_2-1]<<1] | 1)
-	dta h([[play_whistle_1-1]<<1] | 1)
-	dta h([[teleport_player-1]<<1] | 1)
-	dta h([[store_teleport-1]<<1] | 1)
-	dta h([[throw_object-1]<<1] | 0)
-	dta h([[drop_object-1]<<1] | 0)
-	dta h([[pick_up_object-1]<<1] | 0)
-	dta h([[store_object-1]<<1] | 1)
-	dta h([[volume_control-1]<<1] | 1)
-	dta h([[move_left-1]<<1] | 0)
-	dta h([[move_right-1]<<1] | 0)
-	dta h([[move_up-1]<<1] | 0)
-	dta h([[p_pressed-1]<<1] | 1)
-	dta h([[move_down-1]<<1] | 0)
-	dta h([[just_rts-1]<<1] | 0)
+	; Encode the high pointer byte separately so its low-byte carry cannot become the repeat flag.
+	dta [[>[pause-1]<<1] | 0]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[change_to_weapon-1]<<1] | 1]
+	dta [[>[f9_pressed-1]<<1] | 0]
+	dta [[>[retrieve_object-1]<<1] | 1]
+	dta [[>[fire_weapon-1]<<1] | 1]
+	dta [[>[reset_gun_aim-1]<<1] | 0]
+	dta [[>[scroll_viewpoint-1]<<1] | 1]
+	dta [[>[scroll_viewpoint-1]<<1] | 1]
+	dta [[>[scroll_viewpoint-1]<<1] | 1]
+	dta [[>[scroll_viewpoint-1]<<1] | 1]
+	dta [[>[lower_gun_aim-1]<<1] | 0]
+	dta [[>[raise_gun_aim-1]<<1] | 0]
+	dta [[>[use_booster-1]<<1] | 0]
+	dta [[>[or_extra_with_0f-1]<<1] | 0]
+	dta [[>[swap_direction-1]<<1] | 1]
+	dta [[>[play_whistle_2-1]<<1] | 1]
+	dta [[>[play_whistle_1-1]<<1] | 1]
+	dta [[>[teleport_player-1]<<1] | 1]
+	dta [[>[store_teleport-1]<<1] | 1]
+	dta [[>[throw_object-1]<<1] | 0]
+	dta [[>[drop_object-1]<<1] | 0]
+	dta [[>[pick_up_object-1]<<1] | 0]
+	dta [[>[store_object-1]<<1] | 1]
+	dta [[>[volume_control-1]<<1] | 1]
+	dta [[>[move_left-1]<<1] | 0]
+	dta [[>[move_right-1]<<1] | 0]
+	dta [[>[move_up-1]<<1] | 0]
+	dta [[>[p_pressed-1]<<1] | 1]
+	dta [[>[move_down-1]<<1] | 0]
+	dta [[>[just_rts-1]<<1] | 0]
 keys_to_check
 	dta $69 ; Copy
 	dta $20 ; f0
@@ -4557,10 +4598,15 @@ collided_in_last_cycle
 player_teleporting_flag
     dta $00
 .IFNDEF BG_RENDERER_MODE
-BG_LMS_SCROLL_TEST=1
-BG_LMS_VSCROLL_TEST=1
-BG_LMS_FINE_SCROLL_TEST=1
-BG_RENDERER_MODE=2           ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
+BG_RENDERER_MODE=1
+BG_REAL_LMS_SCROLL=1
+BG_INCREMENTAL_LMS_RENDER=1
+;BG_LMS_SCROLL_TEST=1
+;BG_LMS_VSCROLL_TEST=1
+;BG_LMS_FINE_SCROLL_TEST=1
+;BG_REAL_LMS_SCROLL=1
+;BG_INCREMENTAL_LMS_RENDER=1 ; native LMS renderer; Mode 0 plotter supplies dirty regions only
+BG_RENDERER_MODE=1           ; 0 = BBC reference, 1 = native game map, 2 = tile test map, 3 = reference test map
 .ENDIF
 .IFNDEF BG_LMS_SCROLL_TEST
 BG_LMS_SCROLL_TEST=0
@@ -4571,6 +4617,55 @@ BG_LMS_FINE_SCROLL_TEST=0
 .IFNDEF BG_LMS_VSCROLL_TEST
 BG_LMS_VSCROLL_TEST=0
 .ENDIF
+.IFNDEF BG_REAL_LMS_SCROLL
+BG_REAL_LMS_SCROLL=0
+.ENDIF
+.IFNDEF BG_INCREMENTAL_LMS_RENDER
+BG_INCREMENTAL_LMS_RENDER=0
+.ENDIF
+.IFNDEF BG_BACKGROUND_SCROLL_TEST
+BG_BACKGROUND_SCROLL_TEST=0
+.ENDIF
+    IFT BG_REAL_LMS_SCROLL=1
+    IFT BG_RENDERER_MODE<>1
+        ERT "BG_REAL_LMS_SCROLL requires BG_RENDERER_MODE=1"
+    EIF
+    IFT BG_LMS_SCROLL_TEST=1
+        ERT "BG_REAL_LMS_SCROLL cannot be combined with BG_LMS_SCROLL_TEST"
+    EIF
+    EIF
+    IFT BG_BACKGROUND_SCROLL_TEST=1
+    IFT BG_RENDERER_MODE<>1
+        ERT "BG_BACKGROUND_SCROLL_TEST requires BG_RENDERER_MODE=1"
+    EIF
+    IFT BG_REAL_LMS_SCROLL<>1
+        ERT "BG_BACKGROUND_SCROLL_TEST requires BG_REAL_LMS_SCROLL=1"
+    EIF
+    IFT BG_LMS_SCROLL_TEST=1
+        ERT "BG_BACKGROUND_SCROLL_TEST cannot be combined with BG_LMS_SCROLL_TEST"
+    EIF
+    EIF
+
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+m4_incremental_has_work
+    LDX #95
+m4_incremental_has_work_loop
+    LDA m4_incremental_work,X
+    BNE m4_incremental_has_work_found
+    DEX
+    BPL m4_incremental_has_work_loop
+    CLC
+    RTS
+m4_incremental_has_work_found
+    SEC
+    RTS
+    IFT BG_REAL_LMS_SCROLL<>1
+        ERT "BG_INCREMENTAL_LMS_RENDER requires BG_REAL_LMS_SCROLL=1"
+    EIF
+    IFT SRAM=1
+        ERT "BG_INCREMENTAL_LMS_RENDER requires SRAM=0"
+    EIF
+    EIF
     IFT BG_LMS_SCROLL_TEST=1
     IFT BG_RENDERER_MODE<>2
         ERT "BG_LMS_SCROLL_TEST requires BG_RENDERER_MODE=2"
@@ -4594,7 +4689,11 @@ BG_LMS_VSCROLL_TEST=0
     EIF
 .IFNDEF BG_SKIP_REFERENCE_PLOTTER_DRAW
     IFT BG_RENDERER_MODE=1
+        IFT BG_INCREMENTAL_LMS_RENDER=1
 BG_SKIP_REFERENCE_PLOTTER_DRAW=1
+        ELS
+BG_SKIP_REFERENCE_PLOTTER_DRAW=1
+        EIF
     ELS
 BG_SKIP_REFERENCE_PLOTTER_DRAW=0
     EIF
@@ -4663,6 +4762,9 @@ BG_PALETTE_SWAP_INVERT_TEST=0
 BG_PALETTE_TEST_SPRITE=5
 .ENDIF
 main_loop
+    IFT BG_BACKGROUND_SCROLL_TEST=1
+        JMP m4_background_scroll_test_init
+    EIF
     IFT BG_LMS_SCROLL_TEST=1
         JSR lms_scroll_test_init
 lms_scroll_test_idle
@@ -4700,18 +4802,54 @@ L19DC
     BEQ L19E7
     INC explosion_timer
 L19E7
-    JSR clear_charsets          ; TEST: start each frame from an empty screen
+    IFT BG_REAL_LMS_SCROLL=1
+        JSR m4_game_scroll_prepare
+    EIF
     IFT BG_RENDERER_MODE=2
+        JSR clear_charsets
         JSR bg_tiles_test       ; native synthetic map
     ELI BG_RENDERER_MODE=3
+        JSR clear_charsets
         JSR clear_test_bbc_vram
         JSR bg_test_reference   ; synthetic map through original BBC plotter
         JSR vram_convert        ; BBC VRAM reference renderer
     ELI BG_RENDERER_MODE=1
-        JSR bg_tiles_test       ; native game map
-        JSR tt_draw_particles
-        JSR tt_draw_foreground_objects
+        IFT BG_INCREMENTAL_LMS_RENDER=1
+            JSR m4_incremental_prepare
+            JSR m4_incremental_merge_reference_dirty
+            LDA m4_incremental_full_frame
+            BEQ m4_render_native_incremental
+            LDA #0
+            STA m4_incremental_clip
+            JSR clear_charsets
+            JSR bg_tiles_test
+            JSR tt_draw_particles
+            JSR tt_draw_foreground_objects
+            JMP m4_render_native_done
+m4_render_native_incremental
+            JSR m4_incremental_has_work
+            BCS m4_render_native_dirty
+            LDA #0
+            STA m4_incremental_clip
+            JMP m4_render_native_done
+m4_render_native_dirty
+            JSR m4_incremental_clear_dirty
+            LDA #1
+            STA m4_incremental_clip
+            JSR bg_tiles_test
+            JSR tt_draw_particles
+            JSR tt_draw_foreground_objects
+            LDA #0
+            STA m4_incremental_clip
+m4_render_native_done
+        ELS
+            JSR clear_charsets
+            JSR bg_tiles_test       ; native game map
+            JSR tt_draw_particles
+            JSR tt_draw_foreground_objects
+        EIF
     ELS
+        JSR clear_charsets
         JSR vram_convert        ; BBC VRAM game reference
     EIF
     IFT BG_SILHOUETTE_TEST=1
@@ -4728,6 +4866,134 @@ L19E7
             JMP main_loop       ; go round the loop again
         EIF
     EIF
+
+        IFT BG_BACKGROUND_SCROLL_TEST=1
+m4_background_scroll_test_init
+        LDA #$80
+        STA screen_start_square_x_low
+        LDA #$97
+        STA screen_start_square_x
+        LDA #0
+        STA screen_start_square_y_low
+        LDA #$3A
+        STA screen_start_square_y
+        JSR m4_game_scroll_prepare
+        JSR m4_game_lms_patch
+        IFT BG_INCREMENTAL_LMS_RENDER=1
+            LDA #0
+            STA m4_incremental_initialized
+            STA m4_incremental_clip
+            JSR m4_game_charset_patch
+        EIF
+m4_background_scroll_test_loop
+        LDA #0
+        STA palette_register_updating
+m4_background_scroll_test_wait_vbi
+        LDA palette_register_updating
+        BEQ m4_background_scroll_test_wait_vbi
+        JSR m4_background_scroll_test_move
+        BCS m4_background_scroll_test_render
+        LDA m4_background_scroll_test_rendered
+        BNE m4_background_scroll_test_loop
+m4_background_scroll_test_render
+        JSR m4_game_scroll_prepare
+        JSR m4_game_lms_patch
+        IFT BG_INCREMENTAL_LMS_RENDER=1
+            JSR m4_incremental_prepare
+            JSR m4_game_charset_patch
+            LDA m4_incremental_full_frame
+            BEQ m4_background_scroll_test_dirty
+            LDA #0
+            STA m4_incremental_clip
+            JSR clear_charsets
+            JSR bg_tiles_test
+            JMP m4_background_scroll_test_render_done
+m4_background_scroll_test_dirty
+            JSR m4_incremental_clear_dirty
+            LDA #1
+            STA m4_incremental_clip
+            JSR bg_tiles_test
+            LDA #0
+            STA m4_incremental_clip
+            JMP m4_background_scroll_test_render_done
+        EIF
+        JSR clear_charsets
+        JSR bg_tiles_test
+m4_background_scroll_test_render_done
+        LDA #1
+        STA m4_background_scroll_test_rendered
+        JMP m4_background_scroll_test_loop
+
+m4_background_scroll_test_move
+        LDA $D300
+        EOR #$0F
+        STA m4_background_scroll_test_input
+        LDA #0
+        STA m4_background_scroll_test_changed
+        LDA m4_background_scroll_test_input
+        AND #$01
+        BEQ m4_background_scroll_test_down
+        SEC
+        LDA screen_start_square_y_low
+        SBC #$40
+        STA screen_start_square_y_low
+        LDA screen_start_square_y
+        SBC #0
+        STA screen_start_square_y
+        INC m4_background_scroll_test_changed
+m4_background_scroll_test_down
+        LDA m4_background_scroll_test_input
+        AND #$02
+        BEQ m4_background_scroll_test_left
+        CLC
+        LDA screen_start_square_y_low
+        ADC #$40
+        STA screen_start_square_y_low
+        LDA screen_start_square_y
+        ADC #0
+        STA screen_start_square_y
+        INC m4_background_scroll_test_changed
+m4_background_scroll_test_left
+        LDA m4_background_scroll_test_input
+        AND #$04
+        BEQ m4_background_scroll_test_right
+        SEC
+        LDA screen_start_square_x_low
+        SBC #$40
+        STA screen_start_square_x_low
+        LDA screen_start_square_x
+        SBC #0
+        STA screen_start_square_x
+        INC m4_background_scroll_test_changed
+m4_background_scroll_test_right
+        LDA m4_background_scroll_test_input
+        AND #$08
+        BEQ m4_background_scroll_test_move_done
+        CLC
+        LDA screen_start_square_x_low
+        ADC #$40
+        STA screen_start_square_x_low
+        LDA screen_start_square_x
+        ADC #0
+        STA screen_start_square_x
+        INC m4_background_scroll_test_changed
+m4_background_scroll_test_move_done
+        LDA m4_background_scroll_test_changed
+        BEQ m4_background_scroll_test_no_move
+        SEC
+        RTS
+m4_background_scroll_test_no_move
+        CLC
+        RTS
+
+m4_background_scroll_test_input
+        dta 0
+m4_background_scroll_test_changed
+        dta 0
+m4_background_scroll_test_rendered
+        dta 0
+        EIF
+
 handle_background_object
     TSX
     STX copy_of_stack_pointer
@@ -5637,8 +5903,17 @@ L2005
     LSR @ ; $55 = right hand pixel
 L2010
     AND pixel_table,X
+    IFT BG_RENDERER_MODE=1
+        IFT BG_INCREMENTAL_LMS_RENDER=1
+            JSR m4_reference_mark_screen_cell
+            RTS
+        EIF
+    EIF
     EOR (screen_address),Y ; eor with what's already on screen
     STA (screen_address),Y ; plot pixel on screen
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+    JSR m4_reference_mark_screen_cell
+    EIF
     RTS
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -9040,6 +9315,10 @@ redraw_screen
 
 ; scrolling in X
 
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+    LDA #1
+    STA m4_reference_force_full
+    EIF
     LDY scroll_square_x_velocity_high
     INY                         ; Y = $00 left, Y = $01 right
     LDA scroll_square_offset_x_low,Y
@@ -9112,6 +9391,10 @@ not_scrolling_x
 
 ; scrolling in Y
 
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+    LDA #1
+    STA m4_reference_force_full
+    EIF
     LDY scroll_square_y_velocity_high
     INY
     LDA scroll_square_offset_y_low,Y               ; Y = $00 up, Y = $01 down
@@ -14202,22 +14485,29 @@ mode4_init
 ; colour (COLPF0 = frame counter + band hue). Six DLIs per frame, so the
 ; index wraps by itself.
 m4_dli
-    PHA
+    ; Keep DLI register saves out of page 1, which also contains code.
+    STA m4_dli_saved_a
     TXA
-    PHA
+    STA m4_dli_saved_x
     LDX m4_dli_index
     LDA m4_charset_pages,X
     ;lda pooper,x 
     sta $d40a ;wsync
     STA CHBASE
     inc m4_dli_index
-    PLA
-    TAX
-    PLA
+    LDX m4_dli_saved_x
+    LDA m4_dli_saved_a
     RTI
 
+.IF BG_INCREMENTAL_LMS_RENDER=1
+m4_charset_pages                ; high byte of the charset selected for each display row
+:24   dta h(vramfont+[[#>>2]%6]*$400)
+m4_font_bank_pages              ; high byte of each 1 KB charset bank
+:6    dta h(vramfont+#*$400)
+.ELSE
 m4_charset_pages                ; high byte of each band's charset (1 KB each)
 :6    dta h(vramfont+#*$400)
+.ENDIF
 
 pooper
 :6    dta h($6000+#*$400)
@@ -14228,6 +14518,10 @@ m4_band_hue
     dta $00,$20,$40,$60,$80,$A0
 m4_dli_index
     dta 1
+m4_dli_saved_a
+    dta 0
+m4_dli_saved_x
+    dta 0
 m4_frame
     dta 0
 
@@ -14235,7 +14529,61 @@ m4_frame
 m4_dl
     dta $70                     ; 8 blank scan lines
 	dta $70
-    IFT BG_LMS_SCROLL_TEST=1
+    IFT BG_REAL_LMS_SCROLL=1
+GAME_LMS_DL_NORMAL=$44
+GAME_LMS_DL_DLI=$C4
+	    IFT BG_INCREMENTAL_LMS_RENDER=1
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+0*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+1*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+2*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+3*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+4*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+5*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+6*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+7*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+8*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+9*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+10*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+11*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+12*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+13*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+14*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+15*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+16*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+17*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+18*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+19*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+20*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+21*64)
+	dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+22*64)
+	dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+23*64)
+	    ELS
+	dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+0*64)
+	dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+1*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+2*64)
+    dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+3*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+4*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+5*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+6*64)
+    dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+7*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+8*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+9*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+10*64)
+    dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+11*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+12*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+13*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+14*64)
+    dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+15*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+16*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+17*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+18*64)
+    dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+19*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+20*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+21*64)
+    dta GAME_LMS_DL_NORMAL,a(m4_game_scroll_map+22*64)
+    dta GAME_LMS_DL_DLI,a(m4_game_scroll_map+23*64)
+        EIF
+    ELI BG_LMS_SCROLL_TEST=1
         IFT BG_LMS_FINE_SCROLL_TEST=1
             IFT BG_LMS_VSCROLL_TEST=1
 LMS_SCROLL_DL_NORMAL=$74
@@ -14312,6 +14660,485 @@ LMS_SCROLL_MAP_HEIGHT=24
 	;org $9C00                   ; screen map: cell = (row&3)*32 + col
 m4_screen
 	:768 dta [[[#>>5]&3]*32]+[#&31]
+
+    IFT BG_REAL_LMS_SCROLL=1
+    ; Repeated 64-code rows let the LMS start at any ring column without
+    ; crossing into the next row. Extra rows cover the camera's four-row offset.
+    .align $100
+m4_game_scroll_map
+    :27*64 dta [[[#/64]&3]*32]+[#&31]
+m4_game_scroll_x
+    dta 0
+m4_game_scroll_y
+    dta 0
+m4_game_scroll_abs_x
+    dta 0
+m4_game_scroll_abs_y
+    dta 0
+m4_game_scroll_band_base
+    dta 0
+m4_game_charset_bank_tmp
+    dta 0
+m4_game_charset_row_tmp
+    dta 0
+M4_GAME_LMS_SRC=$A6
+M4_GAME_LMS_DST=$A8
+
+m4_game_scroll_prepare
+    LDA screen_start_square_x
+    ASL
+    ASL
+    AND #$1C
+    STA m4_game_scroll_x
+    LDA screen_start_square_x_low
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #$03
+    ORA m4_game_scroll_x
+    STA m4_game_scroll_x
+    LDA screen_start_square_y_low
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #$03
+    STA m4_game_scroll_y
+    LDA screen_start_square_x
+    ASL
+    ASL
+    STA m4_game_scroll_abs_x
+    LDA screen_start_square_x_low
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #$03
+    CLC
+    ADC m4_game_scroll_abs_x
+    STA m4_game_scroll_abs_x
+    LDA screen_start_square_y
+    ASL
+    ASL
+    STA m4_game_scroll_abs_y
+    LDA screen_start_square_y_low
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    AND #$03
+    CLC
+    ADC m4_game_scroll_abs_y
+    STA m4_game_scroll_abs_y
+m4_game_scroll_band_mod
+    LDA screen_start_square_y
+    STA m4_game_scroll_band_tmp
+m4_game_scroll_band_mod_loop
+    LDA m4_game_scroll_band_tmp
+    CMP #6
+    BCC m4_game_scroll_band_ready
+    SEC
+    SBC #6
+    STA m4_game_scroll_band_tmp
+    JMP m4_game_scroll_band_mod_loop
+m4_game_scroll_band_ready
+    STA m4_game_scroll_band_base
+    RTS
+
+m4_game_scroll_band_tmp
+    dta 0
+
+m4_incremental_initialized
+    dta 0
+m4_incremental_full_frame
+    dta 0
+m4_incremental_prev_x
+    dta 0
+m4_incremental_prev_y
+    dta 0
+m4_incremental_dx
+    dta 0
+m4_incremental_dy
+    dta 0
+m4_incremental_clip
+    dta 0
+m4_incremental_track
+    dta 0
+m4_reference_dirty
+    :128 dta 0
+m4_incremental_work
+    :96 dta 0
+m4_reference_initialized
+    dta 0
+m4_reference_force_full
+    dta 0
+m4_ref_saved_x
+    dta 0
+m4_ref_saved_y
+    dta 0
+m4_ref_addr_lo
+    dta 0
+m4_ref_addr_page
+    dta 0
+m4_ref_cell_lo
+    dta 0
+m4_ref_cell_hi
+    dta 0
+m4_ref_mask
+    dta 0
+m4_ref_index
+    dta 0
+m4_ref_scan_byte
+    dta 0
+m4_ref_scan_bits
+    dta 0
+m4_ref_scan_bit
+    dta 0
+m4_ref_source_lo
+    dta 0
+m4_ref_source_hi
+    dta 0
+m4_ref_delta_lo
+    dta 0
+m4_ref_delta_hi
+    dta 0
+m4_incremental_cell_row
+    dta 0
+m4_incremental_cell_col
+    dta 0
+m4_incremental_edge_col
+    dta 0
+m4_incremental_edge_row
+    dta 0
+m4_incremental_probe_line
+    dta 0
+m4_incremental_probe_row
+    dta 0
+m4_incremental_probe_col
+    dta 0
+m4_incremental_dirty_byte
+    dta 0
+m4_incremental_dirty_mask
+    dta 0
+m4_incremental_row_tmp
+    dta 0
+m4_incremental_col_tmp
+    dta 0
+m4_incremental_bank_tmp
+    dta 0
+m4_incremental_clear_byte
+    dta 0
+m4_incremental_clear_bits
+    dta 0
+m4_incremental_clear_bit
+    dta 0
+m4_incremental_clear_col
+    dta 0
+m4_incremental_bit_masks
+    dta 1,2,4,8,16,32,64,128
+
+m4_incremental_prepare
+    LDX #95
+m4_incremental_clear_work_map
+    LDA #0
+    STA m4_incremental_work,X
+    DEX
+    BPL m4_incremental_clear_work_map
+    LDA #0
+    STA m4_incremental_full_frame
+    STA m4_incremental_dx
+    STA m4_incremental_dy
+    LDA m4_incremental_initialized
+    BNE m4_incremental_check_x
+    LDA #1
+    STA m4_incremental_initialized
+    STA m4_incremental_full_frame
+    JMP m4_incremental_save_position
+m4_incremental_check_x
+    LDA m4_game_scroll_abs_x
+    SEC
+    SBC m4_incremental_prev_x
+    BEQ m4_incremental_check_y
+    CMP #1
+    BEQ m4_incremental_x_right
+    CMP #$FF
+    BEQ m4_incremental_x_left
+    JMP m4_incremental_force_full
+m4_incremental_x_right
+    LDA #1
+    STA m4_incremental_dx
+    JMP m4_incremental_check_y
+m4_incremental_x_left
+    LDA #$FF
+    STA m4_incremental_dx
+m4_incremental_check_y
+    LDA m4_game_scroll_abs_y
+    SEC
+    SBC m4_incremental_prev_y
+    BEQ m4_incremental_add_edges
+    CMP #1
+    BEQ m4_incremental_y_down
+    CMP #$FF
+    BEQ m4_incremental_y_up
+    JMP m4_incremental_force_full
+m4_incremental_y_down
+    LDA #1
+    STA m4_incremental_dy
+    JMP m4_incremental_add_edges
+m4_incremental_y_up
+    LDA #$FF
+    STA m4_incremental_dy
+m4_incremental_add_edges
+    LDA m4_incremental_dx
+    BEQ m4_incremental_add_y_edge
+    CMP #1
+    BEQ m4_incremental_right_edge
+    LDA #0
+    BEQ m4_incremental_set_x_edge
+m4_incremental_right_edge
+    LDA #31
+m4_incremental_set_x_edge
+    STA m4_incremental_edge_col
+    LDA #0
+    STA m4_incremental_cell_row
+m4_incremental_x_edge_loop
+    LDA m4_incremental_edge_col
+    STA m4_incremental_cell_col
+    JSR m4_incremental_mark_work_cell
+    INC m4_incremental_cell_row
+    LDA m4_incremental_cell_row
+    CMP #24
+    BNE m4_incremental_x_edge_loop
+m4_incremental_add_y_edge
+    LDA m4_incremental_dy
+    BEQ m4_incremental_save_position
+    CMP #1
+    BEQ m4_incremental_bottom_edge
+    LDA #0
+    BEQ m4_incremental_set_y_edge
+m4_incremental_bottom_edge
+    LDA #23
+m4_incremental_set_y_edge
+    STA m4_incremental_edge_row
+    LDA #0
+    STA m4_incremental_cell_col
+m4_incremental_y_edge_loop
+    LDA m4_incremental_edge_row
+    STA m4_incremental_cell_row
+    JSR m4_incremental_mark_work_cell
+    INC m4_incremental_cell_col
+    LDA m4_incremental_cell_col
+    CMP #32
+    BNE m4_incremental_y_edge_loop
+    JMP m4_incremental_save_position
+m4_incremental_force_full
+    LDA #1
+    STA m4_incremental_full_frame
+m4_incremental_save_position
+    LDA m4_game_scroll_abs_x
+    STA m4_incremental_prev_x
+    LDA m4_game_scroll_abs_y
+    STA m4_incremental_prev_y
+    RTS
+
+m4_incremental_mark_work_cell
+    LDA m4_incremental_cell_row
+    CLC
+    ADC m4_game_scroll_y
+    STA m4_incremental_row_tmp
+    AND #3
+    ASL
+    ASL
+    STA m4_incremental_dirty_byte
+    LDA m4_incremental_row_tmp
+    LSR
+    LSR
+    CLC
+    ADC m4_game_scroll_band_base
+    CMP #6
+    BCC m4_incremental_bank_ready
+    SEC
+    SBC #6
+m4_incremental_bank_ready
+    ASL
+    ASL
+    ASL
+    ASL
+    CLC
+    ADC m4_incremental_dirty_byte
+    STA m4_incremental_dirty_byte
+    LDA m4_incremental_cell_col
+    CLC
+    ADC m4_game_scroll_x
+    AND #$1F
+    STA m4_incremental_col_tmp
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC m4_incremental_dirty_byte
+    STA m4_incremental_dirty_byte
+    LDA m4_incremental_col_tmp
+    AND #7
+    TAX
+    LDA m4_incremental_bit_masks,X
+    STA m4_incremental_dirty_mask
+    LDX m4_incremental_dirty_byte
+    LDA m4_incremental_work,X
+    ORA m4_incremental_dirty_mask
+    STA m4_incremental_work,X
+    RTS
+
+m4_incremental_clear_dirty
+    LDA #0
+    STA m4_incremental_clear_byte
+m4_incremental_clear_byte_loop
+    LDX m4_incremental_clear_byte
+    LDA m4_incremental_work,X
+    STA m4_incremental_clear_bits
+    BEQ m4_incremental_clear_next_byte
+    LDA m4_incremental_clear_byte
+    LSR
+    LSR
+    CLC
+    ADC #>vramfont
+    STA SPR_DST+1
+    LDA m4_incremental_clear_byte
+    AND #3
+    ASL
+    ASL
+    ASL
+    STA m4_incremental_clear_col
+    LDA #0
+    STA m4_incremental_clear_bit
+m4_incremental_clear_bit_loop
+    LDX m4_incremental_clear_bit
+    LDA m4_incremental_bit_masks,X
+    AND m4_incremental_clear_bits
+    BEQ m4_incremental_clear_next_bit
+    LDA m4_incremental_clear_col
+    CLC
+    ADC m4_incremental_clear_bit
+    ASL
+    ASL
+    ASL
+    STA SPR_DST
+    LDY #0
+    LDA #0
+m4_incremental_clear_cell_loop
+    STA (SPR_DST),Y
+    INY
+    CPY #8
+    BNE m4_incremental_clear_cell_loop
+m4_incremental_clear_next_bit
+    INC m4_incremental_clear_bit
+    LDA m4_incremental_clear_bit
+    CMP #8
+    BNE m4_incremental_clear_bit_loop
+m4_incremental_clear_next_byte
+    INC m4_incremental_clear_byte
+    LDA m4_incremental_clear_byte
+    CMP #96
+    BNE m4_incremental_clear_byte_loop
+    RTS
+
+m4_game_lms_patch
+    LDA #<m4_game_scroll_map
+    STA M4_GAME_LMS_SRC
+    LDA #>m4_game_scroll_map
+    STA M4_GAME_LMS_SRC+1
+    LDA m4_game_scroll_y
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    CLC
+    ADC M4_GAME_LMS_SRC
+    STA M4_GAME_LMS_SRC
+    LDA M4_GAME_LMS_SRC+1
+    ADC #0
+    STA M4_GAME_LMS_SRC+1
+    CLC
+    LDA M4_GAME_LMS_SRC
+    ADC m4_game_scroll_x
+    STA M4_GAME_LMS_SRC
+    LDA M4_GAME_LMS_SRC+1
+    ADC #0
+    STA M4_GAME_LMS_SRC+1
+    LDA #<(m4_dl+3)
+    STA M4_GAME_LMS_DST
+    LDA #>(m4_dl+3)
+    STA M4_GAME_LMS_DST+1
+    LDX #24
+m4_game_lms_patch_row
+    LDY #0
+    LDA M4_GAME_LMS_SRC
+    STA (M4_GAME_LMS_DST),Y
+    INY
+    LDA M4_GAME_LMS_SRC+1
+    STA (M4_GAME_LMS_DST),Y
+    LDA M4_GAME_LMS_SRC
+    CLC
+    ADC #64
+    STA M4_GAME_LMS_SRC
+    BCC m4_game_lms_src_no_carry
+    INC M4_GAME_LMS_SRC+1
+m4_game_lms_src_no_carry
+    LDA M4_GAME_LMS_DST
+    CLC
+    ADC #3
+    STA M4_GAME_LMS_DST
+    BCC m4_game_lms_dst_no_carry
+    INC M4_GAME_LMS_DST+1
+m4_game_lms_dst_no_carry
+    DEX
+    BNE m4_game_lms_patch_row
+    RTS
+
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+m4_game_charset_patch
+    LDA m4_game_scroll_band_base
+    STA m4_game_charset_bank_tmp
+    LDA m4_game_scroll_y
+    STA m4_game_charset_row_tmp
+    LDY #0
+m4_game_charset_patch_row
+    LDA m4_game_charset_bank_tmp
+    ASL
+    ASL
+    CLC
+    ADC #>vramfont
+    STA m4_charset_pages,Y
+    INC m4_game_charset_row_tmp
+    LDA m4_game_charset_row_tmp
+    CMP #4
+    BCC m4_game_charset_no_bank_advance
+    LDA #0
+    STA m4_game_charset_row_tmp
+    INC m4_game_charset_bank_tmp
+    LDA m4_game_charset_bank_tmp
+    CMP #6
+    BCC m4_game_charset_no_bank_advance
+    LDA #0
+    STA m4_game_charset_bank_tmp
+m4_game_charset_no_bank_advance
+    INY
+    CPY #24
+    BNE m4_game_charset_patch_row
+    RTS
+    EIF
+    EIF
 
     IFT BG_LMS_SCROLL_TEST=1
 lms_scroll_map
@@ -14616,17 +15443,55 @@ glyph_addr
     LSR
     LSR
     STA SPR_ROW                 ; row = Y>>3
-    AND #3
-    STA SPR_T
-    LDA SPR_ROW
-    LSR
-    LSR                         ; band = row>>2
-    TAX
-    LDA m4_charset_pages,X
-    CLC
-    ADC SPR_T
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+        LDA SPR_ROW
+        CLC
+        ADC m4_game_scroll_y
+        STA m4_incremental_row_tmp
+        AND #3
+        STA SPR_T
+        LDA m4_incremental_row_tmp
+        LSR
+        LSR
+        CLC
+        ADC m4_game_scroll_band_base
+        CMP #6
+        BCC glyph_addr_bank_ready
+        SEC
+        SBC #6
+glyph_addr_bank_ready
+        STA m4_incremental_bank_tmp
+        TAX
+        LDA m4_font_bank_pages,X
+        CLC
+        ADC SPR_T
+    ELS
+        AND #3
+        STA SPR_T
+        LDA SPR_ROW
+        LSR
+        LSR                         ; band = row>>2
+        TAX
+        LDA m4_charset_pages,X
+        CLC
+        ADC SPR_T
+        IFT BG_REAL_LMS_SCROLL=1
+            LDA SPR_ROW
+            AND #3
+            CLC
+            ADC m4_game_scroll_y
+            AND #3
+            CLC
+            ADC m4_charset_pages,X
+        EIF
+    EIF
     STA SPR_DST+1
     LDA SPR_COL                 ; lo = col*8 + (Y&7)
+    IFT BG_REAL_LMS_SCROLL=1
+        CLC
+        ADC m4_game_scroll_x
+        AND #$1F
+    EIF
     ASL
     ASL
     ASL
@@ -14869,42 +15734,26 @@ tt_foreground_source_column_done
     EOR tt_fg_flip,Y
     AND #$C0
     STA TL_FL
-    LDA #0
-    BIT TL_FL
-    BVC tt_foreground_source_start
-    LDX TL_X
-    LDA sprite_height_lookup,X
-    AND #$F8
-tt_foreground_source_start
-    CLC
-    LDX TL_X
-    ADC sprite_offset_b_lookup,X
-    ADC #0
-    ASL
-    ADC #0
-    ASL
-    ADC #0
-    STA TL_O
-    AND #$0F
-    ASL
-    ASL
-    ASL
-    STA TL_B
-    LDA TL_O
-    LSR
-    LSR
-    LSR
-    LSR
-    LSR
-    ORA TL_B
-    STA TL_B
-    LDX TL_X
-    LDA sprite_height_lookup,X
-    LSR
-    LSR
-    LSR
-    STA TL_H
     LDY TL_I
+    LDA tt_fg_geom_valid,Y
+    BEQ tt_foreground_lookup_geometry
+    LDA tt_fg_flags,Y
+    AND #$10
+    BNE tt_foreground_captured_geometry
+    LDA tt_fg_height,Y
+    BEQ tt_foreground_next
+tt_foreground_captured_geometry
+    LDA tt_fg_b,Y
+    STA TL_B
+    LDA tt_fg_height,Y
+    JMP tt_foreground_geometry_ready
+tt_foreground_lookup_geometry
+    LDX TL_X
+    LDA sprite_offset_b_lookup,X
+    STA TL_B
+    LDA sprite_height_lookup,X
+tt_foreground_geometry_ready
+    STA TL_MAP_TMP
     LDA tt_fg_y,Y
     SEC
     SBC screen_start_square_y
@@ -14916,21 +15765,19 @@ tt_foreground_source_start
     SEC
     SBC screen_start_square_y_low_tiles
     STA TL_Y0
-    LDX TL_X
-    LDY TL_I
-    LDA tt_fg_y_low,Y
+    LDA TL_MAP_TMP
+    LSR
+    LSR
+    LSR
+    STA TL_H
+    LDA TL_MAP_TMP
     CLC
-    LDX TL_X
-    ADC sprite_height_lookup,X
+    ADC tt_fg_y_low,Y
     LSR
     LSR
     LSR
     STA TL_MAP_TMP
-    LDX TL_X
-    LDA sprite_height_lookup,X
-    LSR
-    LSR
-    LSR
+    LDA TL_H
     STA TL_O
     LDA TL_MAP_TMP
     SEC
@@ -15043,6 +15890,15 @@ tt_particle_colour_ready
     LDA TL_T
     BEQ tt_particle_next
     JSR glyph_addr
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+        LDA m4_incremental_clip
+        BEQ tt_particle_clip_done
+        LDX m4_incremental_dirty_byte
+        LDA m4_incremental_work,X
+        AND m4_incremental_dirty_mask
+        BEQ tt_particle_next
+tt_particle_clip_done
+    EIF
     LDY #0
     LDA (SPR_DST),Y
     EOR TL_T
@@ -15074,6 +15930,14 @@ tt_fg_flip
     :16 dta 0
 tt_fg_flags
     :16 dta 0
+tt_fg_b
+    :16 dta 0
+tt_fg_height
+    :16 dta 0
+tt_fg_geom_valid
+    :16 dta 0
+tt_fg_geometry_valid
+    dta 0
 fetch_byte
     CPX #32
     BCS fetch_none
@@ -15341,8 +16205,8 @@ TL_PAL=$BF47
 TL_S=$BF2C                     ; 2*phase: bits shifted right
 TL_T8=$BF2D                    ; 8-2*phase: bits brought in from the previous column
 TL_Q=$E0                       ; 2 bytes, zero page: pointer to the previous column (phase shift)
-DUMP_TABLE=$BA90               ; DEBUG: 70 bytes, one per window square (10 x 7), see bg_tiles_test
-DUMP_DONE=$BAD6                ; DEBUG: 1 when bg_tiles_test has finished a pass
+DUMP_TABLE=$BA92               ; DEBUG: 70 bytes, one per window square (10 x 7), see bg_tiles_test
+DUMP_DONE=$BAD8                ; DEBUG: 1 when bg_tiles_test has finished a pass
 FLAG_TABLE=$BC00               ; DEBUG: 70 bytes, path taken in determine_background (0 plain, 1 hash hit, 2 object number without hash entry)
 DBG_OBJFLAG=$BF2A              ; DEBUG: path flag for the last determine_background call
 
@@ -16066,17 +16930,57 @@ tt_palette_map
     CPX #16
     BNE tt_palette_map
     INC TL_H                    ; sprite height is encoded as height - 1
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+        LDA m4_incremental_clip
+        BEQ tt_incremental_probe_done
+        LDA m4_incremental_track
+        BNE tt_incremental_probe_done
+        LDX TL_X
+        LDA sprite_width_lookup,X
+        LSR
+        LSR
+        LSR
+        LSR
+        CLC
+        ADC TL_DPH
+        CLC
+        ADC #4
+        LSR
+        LSR
+        STA TL_W
+        INC TL_W                    ; include the far edge cell in dirty overlap checks
+        JSR m4_incremental_object_has_dirty
+        BCS tt_incremental_probe_done
+        JMP tt_kend
+tt_incremental_probe_done
+    EIF
     LDX TL_X
     LDA #0
     BIT TL_FL
     BVC tt_source_start
+    LDA TL_PRIO
+    BEQ tt_lookup_flipped_height
+    LDA TL_H
+    SEC
+    SBC #1
+    ASL
+    ASL
+    ASL
+    JMP tt_source_start
+tt_lookup_flipped_height
     LDX TL_X
     LDA sprite_height_lookup,X
     AND #$F8
 tt_source_start
     STA TL_O
     LDX TL_X
+    LDA TL_PRIO
+    BEQ tt_lookup_source_b
+    LDA TL_B
+    JMP tt_source_b_ready
+tt_lookup_source_b
     LDA sprite_offset_b_lookup,X
+tt_source_b_ready
     CLC
     ADC TL_O
     ADC #$00                    ; preserve carry from packed b + height
@@ -16340,6 +17244,15 @@ tt_lok
     LDA TL_DC
     STA SPR_COL
     JSR glyph_addr             ; SPR_DST already includes the line within the cell (Y&7)
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+        LDA m4_incremental_clip
+        BEQ tt_lm4_clip_done
+        LDX m4_incremental_dirty_byte
+        LDA m4_incremental_work,X
+        AND m4_incremental_dirty_mask
+        BEQ tt_lpop
+tt_lm4_clip_done
+    EIF
     LDY #0
     PLA
     STA TL_T
@@ -16379,6 +17292,95 @@ tt_kend
     JMP tt_next
 tt_kret
     RTS
+
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+m4_incremental_object_has_dirty
+    LDA #0
+    STA m4_incremental_probe_line
+    LDA #$FF
+    STA m4_incremental_probe_row
+m4_incremental_probe_line_loop
+    LDA TL_Y0
+    CLC
+    ADC m4_incremental_probe_line
+    CMP #192
+    BCS m4_incremental_probe_next_line
+    AND #$F8
+    CMP m4_incremental_probe_row
+    BEQ m4_incremental_probe_next_line
+    STA m4_incremental_probe_row
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC m4_game_scroll_y
+    STA m4_incremental_row_tmp
+    AND #3
+    ASL
+    ASL
+    STA m4_incremental_dirty_byte
+    LDA m4_incremental_row_tmp
+    LSR
+    LSR
+    CLC
+    ADC m4_game_scroll_band_base
+    CMP #6
+    BCC m4_incremental_probe_bank_ready
+    SEC
+    SBC #6
+m4_incremental_probe_bank_ready
+    ASL
+    ASL
+    ASL
+    ASL
+    CLC
+    ADC m4_incremental_dirty_byte
+    STA m4_incremental_dirty_byte
+    LDA #0
+    STA m4_incremental_probe_col
+m4_incremental_probe_col_loop
+    LDA TL_C0
+    CLC
+    ADC m4_incremental_probe_col
+    CMP #32
+    BCS m4_incremental_probe_next_col
+    CLC
+    ADC m4_game_scroll_x
+    AND #$1F
+    STA m4_incremental_col_tmp
+    AND #7
+    TAY
+    LDA m4_incremental_bit_masks,Y
+    STA m4_incremental_dirty_mask
+    LDA m4_incremental_col_tmp
+    LSR
+    LSR
+    LSR
+    CLC
+    ADC m4_incremental_dirty_byte
+    TAX
+    LDA m4_incremental_work,X
+    AND m4_incremental_dirty_mask
+    BNE m4_incremental_probe_found
+m4_incremental_probe_next_col
+    INC m4_incremental_probe_col
+    LDA m4_incremental_probe_col
+    CMP TL_W
+    BCC m4_incremental_probe_col_loop
+m4_incremental_probe_next_line
+    INC m4_incremental_probe_line
+    LDA m4_incremental_probe_line
+    CMP TL_H
+m4_incremental_probe_line_continue
+    BCS m4_incremental_probe_no_dirty
+    JMP m4_incremental_probe_line_loop
+m4_incremental_probe_no_dirty
+    CLC
+    RTS
+m4_incremental_probe_found
+    SEC
+    RTS
+    EIF
 
 tt_next
     IFT BG_LOCAL_REGION_TEST=1
@@ -16734,6 +17736,351 @@ vc_next_row
 vc_done
     RTS
 
+    IFT BG_INCREMENTAL_LMS_RENDER=1
+; Track Mode 0 plotter writes as dirty-cell signals without touching BBC VRAM.
+m4_reference_mark_screen_cell
+    STX m4_ref_saved_x
+    STY m4_ref_saved_y
+    TYA
+    CLC
+    ADC screen_address
+    STA m4_ref_addr_lo
+    LDA screen_address+1
+    ADC #0
+    SEC
+    SBC #screen_base_page
+    AND #screen_size_pages-1
+    ASL
+    ASL
+    STA m4_ref_index
+    LDA m4_ref_addr_lo
+    LSR
+    LSR
+    LSR
+    AND #7
+    TAY
+    LDA m4_incremental_bit_masks,Y
+    STA m4_ref_mask
+    LDA m4_ref_addr_lo
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    ORA m4_ref_index
+    TAX
+    LDA m4_reference_dirty,X
+    ORA m4_ref_mask
+    STA m4_reference_dirty,X
+    LDX m4_ref_saved_x
+    LDY m4_ref_saved_y
+    RTS
+
+; Convert marked BBC cells to native LMS cells; no BBC pixel data is read.
+m4_incremental_merge_reference_dirty
+    LDA screen_offset
+    LSR
+    LSR
+    LSR
+    STA VC_ROWB_LO
+    LDA screen_offset_h
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    ORA VC_ROWB_LO
+    STA VC_ROWB_LO
+    LDA screen_offset_h
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA VC_ROWB_HI
+    LDA #0
+    STA m4_ref_scan_byte
+m4_native_dirty_byte_loop
+    LDX m4_ref_scan_byte
+    LDA m4_reference_dirty,X
+    STA m4_ref_scan_bits
+    BEQ m4_native_dirty_next_byte
+    LDA m4_ref_scan_byte
+    AND #$1F
+    ASL
+    ASL
+    ASL
+    STA m4_ref_source_lo
+    LDA m4_ref_scan_byte
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    STA m4_ref_source_hi
+    LDA #0
+    STA m4_ref_scan_bit
+m4_native_dirty_bit_loop
+    LDX m4_ref_scan_bit
+    LDA m4_incremental_bit_masks,X
+    AND m4_ref_scan_bits
+    BEQ m4_native_dirty_next_bit
+    LDA m4_ref_source_lo
+    CLC
+    ADC m4_ref_scan_bit
+    STA m4_ref_cell_lo
+    LDA m4_ref_source_hi
+    STA m4_ref_cell_hi
+    LDA m4_ref_cell_lo
+    SEC
+    SBC VC_ROWB_LO
+    STA m4_ref_delta_lo
+    LDA m4_ref_cell_hi
+    SBC VC_ROWB_HI
+    AND #3
+    STA m4_ref_delta_hi
+    ASL
+    ASL
+    STA m4_incremental_cell_row
+    LDA m4_ref_delta_lo
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    ORA m4_incremental_cell_row
+    STA m4_incremental_cell_row
+    LDA m4_ref_delta_lo
+    AND #$3F
+    LSR
+    STA m4_incremental_cell_col
+    JSR m4_incremental_mark_work_cell
+m4_native_dirty_next_bit
+    INC m4_ref_scan_bit
+    LDA m4_ref_scan_bit
+    CMP #8
+    BNE m4_native_dirty_bit_loop
+m4_native_dirty_next_byte
+    LDX m4_ref_scan_byte
+    LDA #0
+    STA m4_reference_dirty,X
+    INC m4_ref_scan_byte
+    LDA m4_ref_scan_byte
+    CMP #128
+    BEQ m4_native_dirty_done
+    JMP m4_native_dirty_byte_loop
+m4_native_dirty_done
+    RTS
+
+vram_convert_dirty
+    LDA m4_reference_initialized
+    BNE m4_ref_check_full
+    LDA #1
+    STA m4_reference_initialized
+    STA m4_reference_force_full
+m4_ref_check_full
+    LDA m4_reference_force_full
+    BEQ m4_ref_dirty_start
+    LDA #0
+    STA m4_reference_force_full
+    JSR vram_convert
+    JMP m4_ref_clear_all
+m4_ref_dirty_start
+    LDA screen_offset
+    LSR
+    LSR
+    LSR
+    STA VC_ROWB_LO
+    LDA screen_offset_h
+    ASL
+    ASL
+    ASL
+    ASL
+    ASL
+    ORA VC_ROWB_LO
+    STA VC_ROWB_LO
+    LDA screen_offset_h
+    LSR
+    LSR
+    LSR
+    AND #3
+    STA VC_ROWB_HI
+    LDA #0
+    STA m4_ref_scan_byte
+m4_ref_dirty_byte_loop
+    LDX m4_ref_scan_byte
+    LDA m4_reference_dirty,X
+    STA m4_ref_scan_bits
+    BNE m4_ref_dirty_byte_nonempty
+    JMP m4_ref_next_dirty_byte
+m4_ref_dirty_byte_nonempty
+    LDA m4_ref_scan_byte
+    AND #$1F
+    ASL
+    ASL
+    ASL
+    STA m4_ref_source_lo
+    LDA m4_ref_scan_byte
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    STA m4_ref_source_hi
+    LDA #0
+    STA m4_ref_scan_bit
+m4_ref_dirty_bit_loop
+    LDX m4_ref_scan_bit
+    LDA m4_incremental_bit_masks,X
+    AND m4_ref_scan_bits
+    BEQ m4_ref_next_dirty_bit
+    LDA m4_ref_source_lo
+    CLC
+    ADC m4_ref_scan_bit
+    STA m4_ref_cell_lo
+    LDA m4_ref_source_hi
+    STA m4_ref_cell_hi
+    LDA m4_ref_cell_lo
+    SEC
+    SBC VC_ROWB_LO
+    STA m4_ref_delta_lo
+    LDA m4_ref_cell_hi
+    SBC VC_ROWB_HI
+    AND #3
+    STA m4_ref_delta_hi
+    ASL
+    ASL
+    STA SPR_ROW
+    LDA m4_ref_delta_lo
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    ORA SPR_ROW
+    STA SPR_ROW
+    LDA m4_ref_delta_lo
+    AND #$3F
+    LSR
+    STA SPR_COL
+    LDA m4_ref_delta_lo
+    AND #$FE
+    CLC
+    ADC VC_ROWB_LO
+    STA VC_CA_LO
+    LDA m4_ref_delta_hi
+    ADC VC_ROWB_HI
+    AND #3
+    STA VC_CA_HI
+    JSR m4_ref_convert_one
+m4_ref_next_dirty_bit
+    INC m4_ref_scan_bit
+    LDA m4_ref_scan_bit
+    CMP #8
+    BNE m4_ref_dirty_bit_loop
+m4_ref_next_dirty_byte
+    LDX m4_ref_scan_byte
+    LDA #0
+    STA m4_reference_dirty,X
+    INC m4_ref_scan_byte
+    LDA m4_ref_scan_byte
+    CMP #128
+    BEQ m4_ref_dirty_complete
+    JMP m4_ref_dirty_byte_loop
+m4_ref_dirty_complete
+    RTS
+m4_ref_clear_all
+    LDX #127
+    LDA #0
+m4_ref_clear_all_loop
+    STA m4_reference_dirty,X
+    DEX
+    BPL m4_ref_clear_all_loop
+    RTS
+
+m4_ref_convert_one
+    LDA VC_CA_LO
+    CLC
+    ADC #1
+    STA VC_CB_LO
+    LDA VC_CA_HI
+    ADC #0
+    AND #3
+    STA VC_CB_HI
+    LDA VC_CB_LO
+    LDX VC_CB_HI
+    JSR cell_ptr
+    LDA SPR_P
+    STA SPR_TR
+    LDA SPR_P+1
+    STA SPR_TR+1
+    LDA VC_CA_LO
+    LDX VC_CA_HI
+    JSR cell_ptr
+    LDA SPR_ROW
+    ASL
+    ASL
+    ASL
+    STA SPR_Y
+    JSR glyph_addr
+    LDA #0
+    STA SPR_L
+m4_ref_convert_line
+    LDY SPR_L
+    IFT BG_RAW_BBC_MASK_TEST=1
+    LDA #0
+    STA SPR_T
+    LDA (SPR_P),Y
+    AND #$AA
+    BEQ m4_ref_mask_a_p0
+    LDA SPR_T
+    ORA #$40
+    STA SPR_T
+m4_ref_mask_a_p0
+    LDA (SPR_P),Y
+    AND #$55
+    BEQ m4_ref_mask_a_p1
+    LDA SPR_T
+    ORA #$10
+    STA SPR_T
+m4_ref_mask_a_p1
+    LDA (SPR_TR),Y
+    AND #$AA
+    BEQ m4_ref_mask_b_p0
+    LDA SPR_T
+    ORA #$04
+    STA SPR_T
+m4_ref_mask_b_p0
+    LDA (SPR_TR),Y
+    AND #$55
+    BEQ m4_ref_mask_b_p1
+    LDA SPR_T
+    ORA #$01
+    STA SPR_T
+m4_ref_mask_b_p1
+    LDA SPR_T
+    ELS
+    LDA (SPR_P),Y
+    TAX
+    LDA pix_hi,X
+    STA SPR_T
+    LDY SPR_L
+    LDA (SPR_TR),Y
+    TAX
+    LDA pix_lo,X
+    ORA SPR_T
+    EIF
+    LDY SPR_L
+    STA (SPR_DST),Y
+    INC SPR_L
+    LDA SPR_L
+    CMP #8
+    BNE m4_ref_convert_line
+    RTS
+    EIF
+
 ; A = cell low byte, X = cell high (0-3). SPR_P = vram + cell*8.
 cell_ptr
     STA SPR_T
@@ -16870,12 +18217,18 @@ gamevbi	phr
 	inc palette_register_updating  ; the main loop (scroll_screen) waits for this every frame
 	jsr read_input              ; joystick/console -> keys_pressed (replaces the BBC keyboard scan)
 	mva #1 m4_dli_index
-	mva m4_charset_pages chbase
     IFT BG_LMS_SCROLL_TEST=1
         LDA lms_scroll_ready
         BEQ lms_scroll_vbi_skip
         JSR lms_scroll_test_vbi
 lms_scroll_vbi_skip
     EIF
+    IFT BG_REAL_LMS_SCROLL=1
+        JSR m4_game_lms_patch
+        IFT BG_INCREMENTAL_LMS_RENDER=1
+            JSR m4_game_charset_patch
+        EIF
+    EIF
+	mva m4_charset_pages chbase
 	plr
 	rti
